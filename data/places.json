@@ -1,0 +1,249 @@
+[
+{
+"name": "Catamount Road",
+"mile": 0.028,
+"off_m": 2,
+"lat": 38.9227278,
+"lon": -105.0344485,
+"type": "way",
+"tags": {
+"highway": "track"
+}
+},
+{
+"name": "Crystal Trail",
+"mile": 0.042,
+"off_m": 212,
+"lat": 38.9207919,
+"lon": -105.0333375,
+"type": "way",
+"tags": {
+"highway": "path"
+}
+},
+{
+"name": "Black Bear",
+"mile": 1.176,
+"off_m": 0,
+"lat": 38.9139393,
+"lon": -105.0490735,
+"type": "node",
+"tags": {
+"distance": "8 mi",
+"highway": "milestone"
+}
+},
+{
+"name": "Elk",
+"mile": 2.216,
+"off_m": 0,
+"lat": 38.9045509,
+"lon": -105.0608174,
+"type": "node",
+"tags": {
+"distance": "9 mi",
+"highway": "milestone"
+}
+},
+{
+"name": "Halfway Picnic Grounds",
+"mile": 2.623,
+"off_m": 27,
+"lat": 38.9014382,
+"lon": -105.0652881,
+"type": "node",
+"tags": {
+"tourism": "information"
+}
+},
+{
+"name": "Halfway Picnic Area",
+"mile": 2.649,
+"off_m": 62,
+"lat": 38.9011305,
+"lon": -105.065855,
+"type": "way",
+"tags": {
+"tourism": "attraction"
+}
+},
+{
+"name": "Glen Cove Creek",
+"mile": 2.708,
+"off_m": 213,
+"lat": 38.9007871,
+"lon": -105.0678598,
+"type": "way",
+"tags": {
+"waterway": "stream"
+}
+},
+{
+"name": "Bobcat",
+"mile": 5.135,
+"off_m": 0,
+"lat": 38.8810606,
+"lon": -105.0730774,
+"type": "node",
+"tags": {
+"distance": "12 mi",
+"highway": "milestone"
+}
+},
+{
+"name": "Glen Cove",
+"mile": 5.728,
+"off_m": 33,
+"lat": 38.8755441,
+"lon": -105.0729803,
+"type": "node",
+"tags": {
+"place": "locality"
+}
+},
+{
+"name": "Bighorn Sheep",
+"mile": 5.87,
+"off_m": 0,
+"lat": 38.873909,
+"lon": -105.0741347,
+"type": "node",
+"tags": {
+"distance": "13 mi",
+"highway": "milestone"
+}
+},
+{
+"name": "Devil's Playground",
+"mile": 8.53,
+"off_m": 166,
+"lat": 38.8642018,
+"lon": -105.0708449,
+"type": "node",
+"tags": {
+"ele": "3984",
+"natural": "peak"
+}
+},
+{
+"name": "Devil's Playground",
+"mile": 8.737,
+"off_m": 68,
+"lat": 38.8639752,
+"lon": -105.068848,
+"type": "way",
+"tags": {
+"amenity": "parking"
+}
+},
+{
+"name": "Little Pikes Peak",
+"mile": 10.088,
+"off_m": 172,
+"lat": 38.8494596,
+"lon": -105.0596754,
+"type": "node",
+"tags": {
+"ele": "4073",
+"natural": "peak"
+}
+},
+{
+"name": "Boulder Park",
+"mile": 10.882,
+"off_m": 21,
+"lat": 38.8459148,
+"lon": -105.0518836,
+"type": "node",
+"tags": {
+"tourism": "information"
+}
+},
+{
+"name": "Pikes Peak",
+"mile": 12.421,
+"off_m": 50,
+"lat": 38.8404012,
+"lon": -105.0439523,
+"type": "node",
+"tags": {
+"ele": "4302",
+"natural": "peak"
+}
+},
+{
+"name": "America the Beautiful",
+"mile": 12.421,
+"off_m": 142,
+"lat": 38.840558,
+"lon": -105.0424921,
+"type": "node",
+"tags": {}
+},
+{
+"name": "Pikes Peak",
+"mile": 12.421,
+"off_m": 165,
+"lat": 38.8407808,
+"lon": -105.0423477,
+"type": "node",
+"tags": {
+"railway": "station"
+}
+},
+{
+"name": "Cafe",
+"mile": 12.421,
+"off_m": 103,
+"lat": 38.8397256,
+"lon": -105.0427816,
+"type": "node",
+"tags": {
+"amenity": "cafe"
+}
+},
+{
+"name": "Pike's Peak Summit Visitor Center",
+"mile": 12.421,
+"off_m": 112,
+"lat": 38.8399118,
+"lon": -105.0426407,
+"type": "node",
+"tags": {
+"tourism": "museum"
+}
+},
+{
+"name": "Manitou and Pike's Peak Railway",
+"mile": 12.421,
+"off_m": 160,
+"lat": 38.8406427,
+"lon": -105.0423093,
+"type": "way",
+"tags": {
+"railway": "rail"
+}
+},
+{
+"name": "Pike's Peak Summit Visitor Center",
+"mile": 12.421,
+"off_m": 91,
+"lat": 38.8398457,
+"lon": -105.0428896,
+"type": "way",
+"tags": {
+"amenity": "restaurant"
+}
+},
+{
+"name": "Manitou and Pike's Peak Railway",
+"mile": 12.421,
+"off_m": 158,
+"lat": 38.8406412,
+"lon": -105.0423331,
+"type": "way",
+"tags": {
+"railway": "rail"
+}
+}
+]
