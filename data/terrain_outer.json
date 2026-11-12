@@ -1,0 +1,12 @@
+{
+ "south": 38.81007391525354,
+ "west": -105.11042527981863,
+ "north": 38.94987928474646,
+ "east": -104.99976852018138,
+ "width": 205,
+ "height": 259,
+ "format": "uint16 little-endian, row-major, first row is the north edge",
+ "units": "decimetres above sea level",
+ "cell_m": 59.99,
+ "source": "USGS 3D Elevation Program (3DEP), 1/3 arc-second, via the National Map ImageServer"
+}
