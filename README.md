@@ -1,7 +1,8 @@
 # Pikes Peak Racer
 
 A first-person hill climb driving game for the phone browser: the Pikes Peak International Hill Climb course,
-about 12.3 miles and 4,700 ft of climb, in a single self-contained HTML file with no network requests.
+12.42 miles and 4,700 ft of climb on the real road and terrain, in a single self-contained HTML file with no
+network requests.
 
 **Play:** open the GitHub Pages link for this repo on a phone (landscape works best) or a computer.
 
@@ -14,13 +15,14 @@ about 12.3 miles and 4,700 ft of climb, in a single self-contained HTML file wit
 Best times are saved in each player's own browser.
 
 ## Course data
-The built-in course is an approximation of the real road (length, climb, turn count and section character),
-not a survey. Load a real GPX file from the in-game menu, or replace the `COURSE` array.
+The built-in course is the real Pikes Peak Highway from the hill climb start line to the summit, drawn on
+real terrain. `tools/fetch_course.py` pulls the road and named places from OpenStreetMap and the elevation
+from the USGS 3D Elevation Program and saves them in `data/` (see `data/report.md`). It runs on GitHub's
+servers through the "Fetch course data" workflow: Actions tab → Fetch course data → Run workflow.
+`node src/build.js` then bakes `data/` into `index.html`.
 
-## Real course data
-`tools/fetch_course.py` pulls the real road from OpenStreetMap and the terrain from the USGS 3D Elevation
-Program, and saves them in `data/` (see `data/report.md`). It runs on GitHub's servers through the
-"Fetch course data" workflow: Actions tab → Fetch course data → Run workflow.
+You can still load your own GPX from the in-game menu. A course inside the terrain grid is drawn on the real
+mountain; anywhere else the hillsides are generated from the road.
 
 Road data © OpenStreetMap contributors, available under the Open Database License.
 Elevation data: U.S. Geological Survey, 3D Elevation Program (public domain).
@@ -28,5 +30,5 @@ Elevation data: U.S. Geological Survey, 3D Elevation Program (public domain).
 ## Files
 - `index.html` — the game (built file; this is what GitHub Pages serves)
 - `src/template.html` — game source, with placeholders for the course data
-- `src/gen.js` — generates the built-in course (`course.json`, `landmarks.json`)
-- `src/build.js` — run `node src/build.js` to rebuild `index.html` from the source
+- `src/build.js` — run `node src/build.js` to rebuild `index.html` from the source and `data/`
+- `tools/fetch_course.py` — fetches the road, terrain and landmarks into `data/`

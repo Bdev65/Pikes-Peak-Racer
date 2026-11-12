@@ -40,6 +40,7 @@ details{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}summary{
 .btn.on{border-color:var(--acc);color:var(--acc)}
 .btn.go{background:var(--acc);color:#16110a;border-color:var(--acc);flex:1;font-size:16px;min-height:46px}
 #msg{font-size:12px;color:var(--dim);min-height:16px;margin-top:6px;line-height:1.4}
+#cred{font-size:11px;color:var(--dim);margin-top:8px}
 #help{font-size:12px;color:var(--dim);line-height:1.45;margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
 @media (max-height:420px){#card{padding:10px 14px}h1{font-size:18px}#help{font-size:11px}.row{margin:6px 0}.btn,select{padding:7px 9px;font-size:13px;min-height:36px}#res{margin-bottom:6px}}
 </style>
@@ -75,6 +76,7 @@ details{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}summary{
   <div class="row"><label>Course</label>
     <button class="btn" id="bGpx">Load GPX file</button><button class="btn" id="bStd">Built-in course</button></div>
   <div id="msg"></div>
+  <div id="cred">Road © OpenStreetMap contributors · Terrain: USGS 3D Elevation Program</div>
   <div id="help">Drag anywhere on the left half to steer. Right side: brake (left pedal) and throttle (right pedal) — press higher for more.
   Hold the brake at a standstill for reverse. To drift, open Car setup, pick Aids: ABS + traction control and turn traction control down; more torque and a more rearward drive split make it easier. − / + change how much cockpit you see. Keyboard: arrows or WASD, Z/X shift, R reset.</div>
 </div></div>
@@ -84,13 +86,16 @@ details{border-top:1px solid var(--line);margin-top:8px;padding-top:4px}summary{
 /* ================================================================
    COURSE DATA — replace this array, or use "Load GPX file" in the menu.
    Each point is [latitude, longitude, elevation in metres], in driving order.
-   The built-in set is an approximation of the Pikes Peak hill climb
-   (length, climb, turn count and section character), not a survey.
+   Built-in: the Pikes Peak Highway from the hill climb start line to the summit.
+   Road © OpenStreetMap contributors (ODbL). Elevation: USGS 3D Elevation Program.
    ================================================================ */
 const COURSE = /*COURSE*/;
-/* Landmarks for the built-in course: [miles from start, name] */
+/* Landmarks for the built-in course: [miles from start, name, 1 if offered as a practice start] */
 const LANDMARKS = /*LANDMARKS*/;
-/* Gravel stretches as fractions of course length (used when Surface = Mixed) */
+/* USGS elevation grid around the course: rows run north to south, values are decimetres (uint16, base64).
+   Any course that lies inside its bounds is drawn on the real mountain. TERRAIN.outer is a wider, coarser grid for the distant view. */
+const TERRAIN = /*TERRAIN*/;
+/* Stretches that were gravel before the road was fully paved in 2011, as fractions of course length (Surface = Mixed) */
 const GRAVEL_ZONES = [[0.499, 0.749], [0.853, 0.926]];
 
 /* ---------- helpers ---------- */
@@ -103,13 +108,36 @@ function store(k, v) { try { if (v === undefined) { const s = localStorage.getIt
 function fmtT(t) { if (t == null || !isFinite(t)) return '--:--.---'; const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(3); }
 
 /* ---------- settings ---------- */
-const S = Object.assign({ zoom: 1.35, auto: true, mixed: true, mph: true, sound: true, gfx: 1 }, store('ppk.set') || {});
+const S = Object.assign({ zoom: 1.35, auto: true, mixed: false, mph: true, sound: true, gfx: 1 }, store('ppk.set') || {});
+if (!S.v2) { S.mixed = false; S.v2 = 1; }   // the real road is all tarmac; gravel stays available in the menu
 function saveSet() { store('ppk.set', S); }
 
 /* ================================================================
    TRACK BUILD
    ================================================================ */
 let track = null;
+/* Elevation sampler (smooth bicubic) in game coordinates, or null when the course is not inside the detailed grid.
+   Near the course it reads the detailed grid; further out it blends into the wider, coarser one. */
+function demGrid(T, lat0, lon0, mLat, mLon) {
+  const W = T.width, H = T.height;
+  if (!T.h) { const s = atob(T.b64), n = W * H; T.h = new Float32Array(n); for (let i = 0; i < n; i++) T.h[i] = (s.charCodeAt(2 * i) | s.charCodeAt(2 * i + 1) << 8) / 10; }
+  const d = T.h, dx = (T.east - T.west) / W * mLon, dz = (T.north - T.south) / H * mLat, x0 = (T.west - lon0) * mLon, zN = (T.north - lat0) * mLat;
+  const cr = (a, b, c, e, t) => b + 0.5 * t * (c - a + t * (2 * a - 5 * b + 4 * c - e + t * (3 * (b - c) + e - a)));
+  const f = (x, z) => { const fc = clamp((x - x0) / dx - 0.5, 1, W - 2.001), fr = clamp((zN - z) / dz - 0.5, 1, H - 2.001), c = fc | 0, r = fr | 0, u = fc - c, v = fr - r; let n = (r - 1) * W + c - 1;
+    const r0 = cr(d[n], d[n + 1], d[n + 2], d[n + 3], u); n += W; const r1 = cr(d[n], d[n + 1], d[n + 2], d[n + 3], u); n += W; const r2 = cr(d[n], d[n + 1], d[n + 2], d[n + 3], u); n += W;
+    return cr(r0, r1, r2, cr(d[n], d[n + 1], d[n + 2], d[n + 3], u), v); };
+  // edge(x, z): how many cells inside the usable area the point is (negative = outside)
+  f.edge = (x, z) => { const fc = (x - x0) / dx - 0.5, fr = (zN - z) / dz - 0.5; return Math.min(fc - 1, W - 2 - fc, fr - 1, H - 2 - fr); };
+  f.xa = x0 + 2 * dx; f.xb = x0 + (W - 2) * dx; f.za = zN - (H - 2) * dz; f.zb = zN - 2 * dz; return f;
+}
+function demFor(src, lat0, lon0, mLat, mLon) {
+  const T = TERRAIN; if (!T || !T.b64) return null;
+  for (const p of src) if (!(p[0] > T.south + 0.003 && p[0] < T.north - 0.003 && p[1] > T.west + 0.004 && p[1] < T.east - 0.004)) return null;
+  const fi = demGrid(T, lat0, lon0, mLat, mLon), fo = T.outer ? demGrid(T.outer, lat0, lon0, mLat, mLon) : null;
+  if (!fo) { fi.step = 40; return fi; }
+  const f = (x, z) => { const e = fi.edge(x, z); return e >= 8 ? fi(x, z) : e <= 0 ? fo(x, z) : lerp(fo(x, z), fi(x, z), e / 8); };
+  f.xa = fo.xa; f.xb = fo.xb; f.za = fo.za; f.zb = fo.zb; f.step = 50; return f;
+}
 function buildTrack(src, isStd) {
   const lat0 = src[0][0], lon0 = src[0][1], mLat = 111132, mLon = 111320 * Math.cos(lat0 * Math.PI / 180);
   let px = [], pz = [], py = [], pd = [];
@@ -154,9 +182,11 @@ function buildTrack(src, isStd) {
   // signed "tightest nearby" curvature, used to stop terrain folding over inside hairpins
   const CM = new Float32Array(N);
   for (let i = 0; i < N; i++) { let m = 0; for (let j = Math.max(0, i - 5); j <= Math.min(N - 1, i + 5); j++) if (Math.abs(CV[j]) > Math.abs(m)) m = CV[j]; CM[i] = m; }
-  // cross slope (terrain rise per metre toward the right), from a plane fit to nearby parts of the course
+  // cross slope (terrain rise per metre toward the right): from the real terrain when we have it, otherwise from a plane fit to nearby parts of the course
+  const dem = demFor(src, lat0, lon0, mLat, mLon);
   const CS = new Float32Array(N), step = 4;
-  for (let i = 0; i < N; i += step) {
+  if (dem) for (let i = 0; i < N; i++) { const rx = CH[i] * 14, rz = -SH[i] * 14; CS[i] = clamp((dem(X[i] + rx, Z[i] + rz) - dem(X[i] - rx, Z[i] - rz)) / 28, -0.7, 0.7); }
+  else for (let i = 0; i < N; i += step) {
     const rx = CH[i], rz = -SH[i];
     const sg = vnoise(i * SEG / 650 + 7.3) > 0.5 ? 1 : -1, c0 = sg * (0.26 + 0.3 * vnoise(i * SEG / 300 + 91));
     const g0x = c0 * rx + GR[i] * SH[i], g0z = c0 * rz + GR[i] * CH[i], lam = 4;
@@ -170,7 +200,7 @@ function buildTrack(src, isStd) {
     const det = a11 * a22 - a12 * a12, gx = (b1 * a22 - b2 * a12) / det, gz = (a11 * b2 - a12 * b1) / det;
     CS[i] = clamp(gx * rx + gz * rz, -0.7, 0.7);
   }
-  for (let i = 0; i < N; i++) { const a = Math.floor(i / step) * step, b = Math.min(a + step, Math.floor((N - 1) / step) * step); CS[i] = lerp(CS[a], CS[b], (i - a) / step); }
+  if (!dem) for (let i = 0; i < N; i++) { const a = Math.floor(i / step) * step, b = Math.min(a + step, Math.floor((N - 1) / step) * step); CS[i] = lerp(CS[a], CS[b], (i - a) / step); }
   for (let p = 0; p < 3; p++) { let prev = CS[0]; for (let i = 1; i < N - 1; i++) { const c = CS[i]; CS[i] = (prev + 2 * c + CS[i + 1]) / 4; prev = c; } }
   // surface
   const SURF = new Uint8Array(N);
@@ -226,47 +256,70 @@ function buildTrack(src, isStd) {
   const len = (N - 1) * SEG;
   const lms = isStd ? LANDMARKS.map(l => ({ d: l[0] * MI, name: l[1] })).filter(l => l.d < len) : [];
   // ---- WebGL geometry.
-  // Terrain is one height field: every point takes its height from the road nearest to it (blended where
-  // two stretches are equally near), so the mountain can never rise over or cut across the road.
-  // It is drawn as a regular grid; the road and its verges are a separate, finer strip laid on top.
+  // Terrain is one height field. With the USGS elevation grid (dem) it is the real mountain, eased onto the road:
+  // each point takes the real height difference from the road nearest to it, so the surface always meets the road
+  // edge and never rises over it. Without a grid (your own GPX elsewhere) hillsides are generated from the road.
+  // Three meshes share it: a fine strip along the road, a 10 m grid out to ~160 m, and a 40 m grid for the rest.
   let glm = null;
   if (GLOK) {
     const nA = [new Float32Array(N), new Float32Array(N)], nB = [new Float32Array(N), new Float32Array(N)];
     for (let j = 0; j < N; j++) for (let sd = 0; sd < 2; sd++) { const side = sd ? 1 : -1; nA[sd][j] = (vnoise(j * 0.09 + side * 31) - 0.5) * 9 / 39; nB[sd][j] = (vnoise(j * 0.021 + side * 17) - 0.5) * 0.3; }
-    const offH = (de, s, j, sd) => { // height above the road at de metres past the road edge
+    const offH = (de, s, j, sd) => { // generated hillside: height above the road at de metres past the road edge
       if (de <= 0) return 0; if (de <= 1.6) return -0.12 * de / 1.6;
       const dn = Math.min(de, 9) - 1.6; let h = -0.12 + (s > 0 ? dn * s * 1.6 + (s > 0.2 ? 0.5 * Math.min(1, dn / 2) : 0) : dn * s * 1.25);
       if (de > 9) { const m = Math.min(de - 9, 39), x = Math.max(de - 48, 0); h += s * (0.85 * m + 0.6 * x - (s > 0 ? 0.009 * x * x : 0)) + nA[sd][j] * m + nB[sd][j] * x; }
       return h; };
     const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-    // --- grid: splat every road sample onto the nodes around it
-    const RG = 165; let gx0 = 1e9, gx1 = -1e9, gz0 = 1e9, gz1 = -1e9;
+    const RG = 165, Y0 = Y[0], demR = dem ? new Float32Array(N) : null;
+    if (dem) for (let j = 0; j < N; j++) demR[j] = dem(X[j], Z[j]);
+    const ramp = dist => clamp((dist - HW - 1.6) / 7, 0, 1);   // road bench: flat across the road, real slope from 7 m past the shoulder
+    const tdAt = h => clamp((3530 - h) / 230, 0, 1);
+    // --- splat every road sample onto the grid nodes around it; returns blend sums for the nodes near the road
+    const splat = (ox, oz, sx, sz, GW, GH) => {
+      const gid = new Int32Array(GW * GH).fill(-1), lim2 = (RG - 8) * (RG - 8);
+      const each = fn => { for (let j = 0; j < N; j++) {
+        const a0 = Math.max(0, Math.ceil((X[j] - RG - ox) / sx)), a1 = Math.min(GW - 1, Math.floor((X[j] + RG - ox) / sx)), b0 = Math.max(0, Math.ceil((Z[j] - RG - oz) / sz)), b1 = Math.min(GH - 1, Math.floor((Z[j] + RG - oz) / sz));
+        for (let b = b0; b <= b1; b++) { const dz = oz + b * sz - Z[j], row = b * GW; for (let a = a0; a <= a1; a++) { const dx = ox + a * sx - X[j], d2 = dx * dx + dz * dz; if (d2 < RG * RG) fn(j, row + a, dx, dz, d2); } } } };
+      each((j, n, dx, dz, d2) => { if (d2 < lim2) gid[n] = 0; });
+      let ng = 0; for (let n = 0; n < gid.length; n++) if (gid[n] === 0) gid[n] = ng++;
+      const SW = new Float64Array(ng), A = new Float64Array(ng), B = new Float64Array(ng), MD = new Float32Array(ng).fill(1e9);
+      each((j, n, dx, dz, d2) => { const g = gid[n]; if (g < 0) return; const dist = Math.sqrt(d2), w = 1 / ((d2 + 9) * (d2 + 9)); SW[g] += w;
+        if (dem) { const r = ramp(dist); A[g] += w * (Y[j] - Y0 - r * demR[j]); B[g] += w * r; }
+        else { const sd = dx * CH[j] - dz * SH[j] >= 0 ? 1 : 0; A[g] += w * (Y[j] - Y0 + offH(dist - HW, (sd ? 1 : -1) * CS[j], j, sd)); }
+        if (dist < MD[g]) MD[g] = dist; });
+      return { gid, ng, SW, A, B, MD };
+    };
+    // --- fine grid
+    let gx0 = 1e9, gx1 = -1e9, gz0 = 1e9, gz1 = -1e9;
     for (let i = 0; i < N; i++) { gx0 = Math.min(gx0, X[i]); gx1 = Math.max(gx1, X[i]); gz0 = Math.min(gz0, Z[i]); gz1 = Math.max(gz1, Z[i]); }
-    gx0 -= RG; gz0 -= RG; gx1 += RG; gz1 += RG; let gs = 10; while (((gx1 - gx0) / gs + 2) * ((gz1 - gz0) / gs + 2) > 1.8e6) gs += 2;
-    const GW = Math.ceil((gx1 - gx0) / gs) + 1, GH = Math.ceil((gz1 - gz0) / gs) + 1, SWt = new Float64Array(GW * GH), SHt = new Float64Array(GW * GH), STt = new Float32Array(GW * GH), MD = new Float32Array(GW * GH).fill(1e9);
-    for (let j = 0; j < N; j++) {
-      const a0 = Math.max(0, Math.ceil((X[j] - RG - gx0) / gs)), a1 = Math.min(GW - 1, Math.floor((X[j] + RG - gx0) / gs)), b0 = Math.max(0, Math.ceil((Z[j] - RG - gz0) / gs)), b1 = Math.min(GH - 1, Math.floor((Z[j] + RG - gz0) / gs));
-      const yj = Y[j] - Y[0], csj = CS[j], chj = CH[j], shj = SH[j], tdj = TD[j];
-      for (let b = b0; b <= b1; b++) { const dz = gz0 + b * gs - Z[j], row = b * GW; for (let a = a0; a <= a1; a++) {
-        const dx = gx0 + a * gs - X[j], d2 = dx * dx + dz * dz; if (d2 > RG * RG) continue;
-        const dist = Math.sqrt(d2), sd = dx * chj - dz * shj >= 0 ? 1 : 0, w = 1 / ((d2 + 9) * (d2 + 9)), n = row + a;
-        SWt[n] += w; SHt[n] += w * (yj + offH(dist - HW, (sd ? 1 : -1) * csj, j, sd)); STt[n] += w * tdj * 1e6; if (dist < MD[n]) MD[n] = dist;
-      } }
-    }
-    const HG = new Float32Array(GW * GH), gid = new Int32Array(GW * GH).fill(-1); let ng = 0;
-    for (let n = 0; n < GW * GH; n++) if (MD[n] < RG - 8) { HG[n] = Y[0] + SHt[n] / SWt[n] - Math.max(0, MD[n] - 115) * 1.2; gid[n] = ng++; }
+    gx0 -= RG; gz0 -= RG; gx1 += RG; gz1 += RG; let gs = 10; while (((gx1 - gx0) / gs + 2) * ((gz1 - gz0) / gs + 2) > 6e6) gs += 2;
+    const GW = Math.ceil((gx1 - gx0) / gs) + 1, GH = Math.ceil((gz1 - gz0) / gs) + 1, F = splat(gx0, gz0, gs, gs, GW, GH), gid = F.gid, ng = F.ng, MDg = F.MD, HG = new Float32Array(ng);
+    for (let b = 0; b < GH; b++) for (let a = 0; a < GW; a++) { const g = gid[b * GW + a]; if (g < 0) continue;
+      if (dem) { const dn = dem(gx0 + a * gs, gz0 + b * gs); HG[g] = lerp(Y0 + (F.A[g] + dn * F.B[g]) / F.SW[g], dn, sstep(100, 150, MDg[g])); }
+      else HG[g] = Y0 + F.A[g] / F.SW[g] - Math.max(0, MDg[g] - 115) * 1.2; }
     // --- exact height at any point near a road (same blend as the grid), plus distance to the nearest road
     const cell = 48, hgrid = new Map(), gk = (a, b) => (a + 8192) * 16384 + (b + 8192);
     for (let i = 0; i < N; i++) { const k = gk(Math.floor(X[i] / cell), Math.floor(Z[i] / cell)); let a = hgrid.get(k); if (!a) hgrid.set(k, a = []); a.push(i); }
     const hp = { h: 0, d: 1e9, fd: 1e9 };
-    const hPoint = (x, z, own) => { let sw = 0, sh = 0, md = 1e9, fd = 1e9; const c0 = Math.floor(x / cell), c1 = Math.floor(z / cell);
+    const hPoint = (x, z, own) => { let sw = 0, sa = 0, sb = 0, md = 1e9, fd = 1e9; const c0 = Math.floor(x / cell), c1 = Math.floor(z / cell);
       for (let a = c0 - 1; a <= c0 + 1; a++) for (let b = c1 - 1; b <= c1 + 1; b++) { const l = hgrid.get(gk(a, b)); if (!l) continue; for (const j of l) {
-        const dx = x - X[j], dz = z - Z[j], d2 = dx * dx + dz * dz, dist = Math.sqrt(d2), sd = dx * CH[j] - dz * SH[j] >= 0 ? 1 : 0, w = 1 / ((d2 + 9) * (d2 + 9));
-        sw += w; sh += w * (Y[j] - Y[0] + offH(dist - HW, (sd ? 1 : -1) * CS[j], j, sd)); if (dist < md) md = dist; if (own >= 0 && Math.abs(j - own) > 14 && dist < fd) fd = dist; } }
-      hp.h = sw > 0 ? Y[0] + sh / sw : NaN; hp.d = md; hp.fd = fd; return hp; };
-    const gridH = (x, z) => { const fa = (x - gx0) / gs, fb = (z - gz0) / gs, a = Math.floor(fa), b = Math.floor(fb); if (a < 0 || b < 0 || a >= GW - 1 || b >= GH - 1) return NaN; const n = b * GW + a; if (gid[n] < 0 || gid[n + 1] < 0 || gid[n + GW] < 0 || gid[n + GW + 1] < 0) return NaN; const u = fa - a, v = fb - b; return lerp(lerp(HG[n], HG[n + 1], u), lerp(HG[n + GW], HG[n + GW + 1], u), v); };
+        const dx = x - X[j], dz = z - Z[j], d2 = dx * dx + dz * dz, dist = Math.sqrt(d2), w = 1 / ((d2 + 9) * (d2 + 9)); sw += w;
+        if (dem) { const r = ramp(dist); sa += w * (Y[j] - Y0 - r * demR[j]); sb += w * r; }
+        else { const sd = dx * CH[j] - dz * SH[j] >= 0 ? 1 : 0; sa += w * (Y[j] - Y0 + offH(dist - HW, (sd ? 1 : -1) * CS[j], j, sd)); }
+        if (dist < md) md = dist; if (own >= 0 && Math.abs(j - own) > 14 && dist < fd) fd = dist; } }
+      hp.h = sw > 0 ? Y0 + (dem ? sa + dem(x, z) * sb : sa) / sw : NaN; hp.d = md; hp.fd = fd; return hp; };
+    const gridH = (x, z) => { const fa = (x - gx0) / gs, fb = (z - gz0) / gs, a = Math.floor(fa), b = Math.floor(fb); if (a < 0 || b < 0 || a >= GW - 1 || b >= GH - 1) return NaN; const n = b * GW + a, g0 = gid[n], g1 = gid[n + 1], g2 = gid[n + GW], g3 = gid[n + GW + 1]; if (g0 < 0 || g1 < 0 || g2 < 0 || g3 < 0) return NaN; const u = fa - a, v = fb - b; return lerp(lerp(HG[g0], HG[g1], u), lerp(HG[g2], HG[g3], u), v); };
+    // --- far grid: the whole elevation model on a coarse lattice, eased onto the road where it passes near it
+    let far = null, nf = 0;
+    if (dem) {
+      const sx = dem.step, sz = dem.step, ox = dem.xa, oz = dem.za, FW = Math.floor((dem.xb - dem.xa) / sx) + 1, FH = Math.floor((dem.zb - dem.za) / sz) + 1;
+      const R = splat(ox, oz, sx, sz, FW, FH), hh = new Float32Array(FW * FH), md = new Float32Array(FW * FH);
+      for (let b = 0; b < FH; b++) for (let a = 0; a < FW; a++) { const n = b * FW + a, g = R.gid[n]; let h = dem(ox + a * sx, oz + b * sz), m = 1e9;
+        if (g >= 0) { m = R.MD[g]; h = lerp(Y0 + (R.A[g] + h * R.B[g]) / R.SW[g], h, sstep(100, 150, m)); } hh[n] = h; md[n] = m; }
+      far = { FW, FH, sx, sz, ox, oz, hh, md }; nf = FW * FH;
+    }
     // --- road strip: 14 vertices across, out to 26 m past each edge where it tucks under the grid
-    const DG = [0, 1.6, 4, 9, 13, 18, 26], HV = 7, NV = 14, vtx = new Float32Array((N * NV + ng) * 9);
+    const DG = [0, 1.6, 4, 9, 13, 18, 26], HV = 7, NV = 14, vtx = new Float32Array((N * NV + ng + nf) * 9);
     for (let i = 0; i < N; i++) for (let k = 0; k < NV; k++) {
       const side = k < HV ? -1 : 1, d = DG[k < HV ? HV - 1 - k : k - HV]; prof(i, side, d, o2);
       const x = X[i] + CH[i] * o2[0], z = Z[i] - SH[i] * o2[0]; let y = Y[i] + o2[1];
@@ -277,20 +330,30 @@ function buildTrack(src, isStd) {
       const b = (i * NV + k) * 9, a0 = (Math.max(0, i - 1) * NV + k) * 9, a1 = (Math.min(N - 1, i + 1) * NV + k) * 9, c0 = (i * NV + Math.max(0, k - 1)) * 9, c1 = (i * NV + Math.min(NV - 1, k + 1)) * 9;
       const ax = vtx[a1] - vtx[a0], ay = vtx[a1 + 1] - vtx[a0 + 1], az = vtx[a1 + 2] - vtx[a0 + 2], bx = vtx[c1] - vtx[c0], by = vtx[c1 + 1] - vtx[c0 + 1], bz = vtx[c1 + 2] - vtx[c0 + 2];
       let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx; if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; } const l = Math.hypot(nx, ny, nz) || 1;
-      if (k === HV - 1 || k === HV || l < 1e-6) { nx = 0; ny = 1; nz = 0; vtx[b + 3] = 0; vtx[b + 4] = 1; vtx[b + 5] = 0; } else { vtx[b + 3] = nx / l; vtx[b + 4] = ny / l; vtx[b + 5] = nz / l; }
+      if (k === HV - 1 || k === HV || l < 1e-6) { vtx[b + 3] = 0; vtx[b + 4] = 1; vtx[b + 5] = 0; } else { vtx[b + 3] = nx / l; vtx[b + 4] = ny / l; vtx[b + 5] = nz / l; }
     }
-    // --- grid vertices (sunk out of sight right under the road strip) and normals
+    // --- fine grid vertices (sunk out of sight right under the road strip) and normals
+    const base = N * NV;
     for (let b = 0; b < GH; b++) for (let a = 0; a < GW; a++) { const n = b * GW + a, g = gid[n]; if (g < 0) continue;
-      const o = (N * NV + g) * 9, hl = a > 0 && gid[n - 1] >= 0 ? HG[n - 1] : HG[n], hr = a < GW - 1 && gid[n + 1] >= 0 ? HG[n + 1] : HG[n], hd = b > 0 && gid[n - GW] >= 0 ? HG[n - GW] : HG[n], hu = b < GH - 1 && gid[n + GW] >= 0 ? HG[n + GW] : HG[n];
-      const nx = -(hr - hl), nz = -(hu - hd), ny = 2 * gs, l = Math.hypot(nx, ny, nz);
-      vtx[o] = gx0 + a * gs; vtx[o + 1] = HG[n] - 8 * (1 - sstep(HW + 6, HW + 12, MD[n])); vtx[o + 2] = gz0 + b * gs; vtx[o + 3] = nx / l; vtx[o + 4] = ny / l; vtx[o + 5] = nz / l; vtx[o + 6] = 99; vtx[o + 7] = STt[n] / (SWt[n] * 1e6); vtx[o + 8] = 0; }
+      const h = HG[g], gl_ = a > 0 ? gid[n - 1] : -1, gr = a < GW - 1 ? gid[n + 1] : -1, gd = b > 0 ? gid[n - GW] : -1, gu = b < GH - 1 ? gid[n + GW] : -1;
+      const nx = -((gr >= 0 ? HG[gr] : h) - (gl_ >= 0 ? HG[gl_] : h)), nz = -((gu >= 0 ? HG[gu] : h) - (gd >= 0 ? HG[gd] : h)), ny = 2 * gs, l = Math.hypot(nx, ny, nz), o = (base + g) * 9;
+      vtx[o] = gx0 + a * gs; vtx[o + 1] = h - 8 * (1 - sstep(HW + 6, HW + 12, MDg[g])); vtx[o + 2] = gz0 + b * gs; vtx[o + 3] = nx / l; vtx[o + 4] = ny / l; vtx[o + 5] = nz / l; vtx[o + 6] = Math.max(30, MDg[g]); vtx[o + 7] = tdAt(h); vtx[o + 8] = 0; }
     const idxA = []; let q = 0;
     const idxR = new Uint32Array((N - 1) * (NV - 1) * 6);
     for (let i = 0; i < N - 1; i++) for (let k = 0; k < NV - 1; k++) { const a = i * NV + k, b = a + NV; idxR[q++] = a; idxR[q++] = a + 1; idxR[q++] = b; idxR[q++] = a + 1; idxR[q++] = b + 1; idxR[q++] = b; }
-    const tiles = [], TS = 24, base = N * NV;
+    const tiles = [], TS = 24;
     for (let tb = 0; tb < GH - 1; tb += TS) for (let ta = 0; ta < GW - 1; ta += TS) { const io = idxR.length + idxA.length;
       for (let b = tb; b < Math.min(tb + TS, GH - 1); b++) for (let a = ta; a < Math.min(ta + TS, GW - 1); a++) { const n = b * GW + a, g0 = gid[n], g1 = gid[n + 1], g2 = gid[n + GW], g3 = gid[n + GW + 1]; if (g0 < 0 || g1 < 0 || g2 < 0 || g3 < 0) continue; idxA.push(base + g0, base + g2, base + g1, base + g1, base + g2, base + g3); }
-      const ic = idxR.length + idxA.length - io; if (ic) tiles.push({ x: gx0 + (ta + TS / 2) * gs, z: gz0 + (tb + TS / 2) * gs, r: TS * gs * 0.75, io, ic }); }
+      const ic = idxR.length + idxA.length - io; if (ic) tiles.push({ x: gx0 + (ta + TS / 2) * gs, z: gz0 + (tb + TS / 2) * gs, r: TS * gs * 0.75, dm: 2800, io, ic }); }
+    // --- far grid vertices and tiles (lowered where the fine grid covers it)
+    if (far) { const { FW, FH, sx, sz, ox, oz, hh, md } = far, fb = base + ng, FT = 16;
+      for (let b = 0; b < FH; b++) for (let a = 0; a < FW; a++) { const n = b * FW + a, h = hh[n], m = md[n], o = (fb + n) * 9;
+        const nx = -(hh[a < FW - 1 ? n + 1 : n] - hh[a > 0 ? n - 1 : n]) / sx, nz = -(hh[b < FH - 1 ? n + FW : n] - hh[b > 0 ? n - FW : n]) / sz, l = Math.hypot(nx, 2, nz);
+        vtx[o] = ox + a * sx; vtx[o + 1] = h - 14 * (1 - sstep(70, 105, m)) - 2.5 * (1 - sstep(135, 165, m)); vtx[o + 2] = oz + b * sz; vtx[o + 3] = nx / l; vtx[o + 4] = 2 / l; vtx[o + 5] = nz / l; vtx[o + 6] = Math.max(30, Math.min(m, 999)); vtx[o + 7] = tdAt(h); vtx[o + 8] = 0; }
+      for (let tb = 0; tb < FH - 1; tb += FT) for (let ta = 0; ta < FW - 1; ta += FT) { const io = idxR.length + idxA.length;
+        for (let b = tb; b < Math.min(tb + FT, FH - 1); b++) for (let a = ta; a < Math.min(ta + FT, FW - 1); a++) { const n = b * FW + a; if (md[n] < 70 && md[n + 1] < 70 && md[n + FW] < 70 && md[n + FW + 1] < 70) continue; idxA.push(fb + n, fb + n + FW, fb + n + 1, fb + n + 1, fb + n + FW, fb + n + FW + 1); }
+        const ic = idxR.length + idxA.length - io; if (ic) tiles.push({ x: ox + (ta + FT / 2) * sx, z: oz + (tb + FT / 2) * sz, r: FT * Math.max(sx, sz) * 0.75, dm: 5600, io, ic }); }
+    }
     const idx = new Uint32Array(idxR.length + idxA.length); idx.set(idxR); idx.set(idxA, idxR.length);
     // --- instances: x, y, z, height, kind, tint
     const inst = [], CHN = 48, chunks = [], SL = 18;
@@ -306,6 +369,7 @@ function buildTrack(src, isStd) {
         const al = (hash(s * 9.7) - 0.5) * SEG, off = side * (HW + d), x = X[i] + CH[i] * off + SH[i] * al, z = Z[i] - SH[i] * off + CH[i] * al;
         hPoint(x, z, -1); if (hp.d < HW + (h > 3 ? 3.2 : 1.8)) continue;   // never on or over any stretch of road
         const y = hp.d < HW + 16 ? hp.h : gridH(x, z); if (!(y === y)) continue;
+        if (kind <= 4 && hash(s * 17.7) > (3585 - y) / 110) continue;       // no trees above the real tree line
         inst.push(x, y - (h > 3 ? 0.25 : 0.05), z, h, kind, 0.82 + 0.36 * hash(s * 13.3));
       }
       chunks.push({ x: X[mid], z: Z[mid], r: 300, io: i0 * (NV - 1) * 6, ic: (i1 - i0) * (NV - 1) * 6, no, nc: inst.length / 6 - no });
@@ -327,9 +391,9 @@ function buildTrack(src, isStd) {
       for (let row = 0; row < 2; row++) { const e0 = sv(gI + row, HV - 1, 0.03), e1 = sv(gI + row, HV, 0.03), f0 = sv(gI + row + 1, HV - 1, 0.03), f1 = sv(gI + row + 1, HV, 0.03);
         for (let k = 0; k < 8; k++) for (let h = 0; h < 2; h++) { const t0 = h / 2, t1 = (h + 1) / 2, c2 = (k + row + h) & 1 ? [0.92, 0.92, 0.92] : [0.07, 0.07, 0.08]; quad(mx(mx(e0, e1, k / 8), mx(f0, f1, k / 8), t0), mx(mx(e0, e1, (k + 1) / 8), mx(f0, f1, (k + 1) / 8), t0), mx(mx(e0, e1, (k + 1) / 8), mx(f0, f1, (k + 1) / 8), t1), mx(mx(e0, e1, k / 8), mx(f0, f1, k / 8), t1), c2); } }
     }
-    glm = { vtx, idx, inst: new Float32Array(inst), props: new Float32Array(pr), chunks, tiles, vis: new Int32Array(chunks.length), grid: { gx0, gz0, gs, GW, GH, gid, base, NV } };
+    glm = { vtx, idx, inst: new Float32Array(inst), props: new Float32Array(pr), chunks, tiles, vis: new Int32Array(chunks.length), real: !!dem, grid: { gx0, gz0, gs, GW, GH, gid, base, NV, ng, nf } };
   }
-  return { glm, N, X, Z, Y, HD, SH, CH, GR, CV, CM, CS, SURF, TD, CN, VERT, TREE, RAIL, len, isStd, key: isStd ? 'std' : 'gpx' + N,
+  return { glm, N, X, Z, Y, HD, SH, CH, GR, CV, CM, CS, SURF, TD, CN, VERT, TREE, RAIL, len, isStd, key: isStd ? 'std2' : 'gpx' + N,
     startD: 40, finishD: len - 45, splits: [0.499 * len, 0.749 * len], mm, mw, mh, mapX, mapY, lms };
 }
 
@@ -862,6 +926,7 @@ void main(){
   vec3 n = normalize(vN);
   float lod = clamp(1.0 - dist / 110.0, 0.0, 1.0), lod2 = clamp(1.0 - dist / 500.0, 0.0, 1.0);
   float n0 = vW.y > 3880.0 ? vn(vR, 0.03125) : 0.0, n1 = vn(vR, 0.125), n2 = vn(vR, 0.5), n3 = vn(vR, 2.0);
+  float f3 = clamp(1.5 - dist / 260.0, 0.0, 1.0); n2 = mix(0.5, n2, clamp(1.6 - dist / 900.0, 0.0, 1.0)); n3 = mix(0.5, n3, f3);
   float n4 = 0.5, n5 = 0.5; if (lod > 0.0) { n4 = mix(0.5, vn(vR, 8.0), lod); n5 = mix(0.5, vn(vR, 32.0), lod * lod); }
   // ---- terrain: soil by vegetation zone, rock where it is steep, scree and snow up high
   float slope = 1.0 - n.y, alt = smoothstep(3650.0, 4050.0, vW.y);
@@ -870,12 +935,16 @@ void main(){
   vec3 tund = mix(vec3(0.37, 0.38, 0.21), vec3(0.58, 0.52, 0.34), n1 * 0.5 + n2 * 0.3 + n3 * 0.2);
   vec3 soil = mix(tund, mix(grass, duff, smoothstep(7.0, 22.0, au + n2 * 6.0)), td);
   vec3 rock = mix(vec3(0.47, 0.38, 0.34), vec3(0.72, 0.62, 0.56), n2 * 0.45 + n3 * 0.3 + n4 * 0.25);
-  rock *= 1.0 - 0.14 * (1.0 - smoothstep(0.0, 0.05, abs(n3 - 0.5))) * lod2;
+  rock *= 1.0 - 0.14 * (1.0 - smoothstep(0.0, 0.05, abs(n3 - 0.5))) * lod2 * f3;
   float rk = smoothstep(0.26, 0.46, slope + (n2 - 0.5) * 0.22);
-  rk = max(rk, alt * smoothstep(0.42, 0.7, n1 * 0.7 + n3 * 0.3));
+  float alt2 = smoothstep(3750.0, 4250.0, vW.y);
+  rk = max(rk, alt * smoothstep(0.42 - 0.3 * alt2, 0.7 - 0.3 * alt2, n1 * 0.7 + n3 * 0.3));
   vec3 ter = mix(soil, rock, rk) * (0.8 + 0.4 * n4) * (0.9 + 0.2 * n5);
   float snow = smoothstep(3900.0, 4300.0, vW.y) * smoothstep(0.68, 0.76, n0 * 0.7 + n1 * 0.45) * (1.0 - smoothstep(0.4, 0.7, slope));
   ter = mix(ter, vec3(0.93, 0.95, 0.98), snow);
+  // forest seen from a distance, past where individual trees are drawn
+  float cano = td * smoothstep(120.0, 190.0, au) * (1.0 - rk) * (1.0 - snow) * smoothstep(0.3, 0.55, n1 * 0.6 + n2 * 0.4 + 0.12);
+  ter = mix(ter, vec3(0.075, 0.135, 0.08) * (0.7 + 0.6 * n2), cano);
   // ---- shoulder
   vec3 sh = vec3(0.56, 0.51, 0.44) * (0.72 + 0.4 * n5 + 0.16 * n3);
   // ---- road
@@ -903,7 +972,7 @@ void main(){
 out vec2 vP; void main(){ vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0; vP = p; gl_Position = vec4(p, 1.0, 1.0); }`,
   skyF: `#version 300 es
 precision highp float;
-in vec2 vP; uniform mat3 uRT; uniform vec3 uK, uSun, uFog; uniform vec4 uPk; out vec4 o;
+in vec2 vP; uniform mat3 uRT; uniform vec3 uK, uSun, uFog; uniform vec4 uPk; uniform float uHz; out vec4 o;
 float h1(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float nz(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1, 0)), f.x), mix(h1(i + vec2(0, 1)), h1(i + vec2(1, 1)), f.x), f.y); }
 float fbm(vec2 p){ float a = 0.5, s = 0.0; for (int k = 0; k < 5; k++) { s += a * nz(p); p = p * 2.03 + 11.0; a *= 0.5; } return s; }
@@ -922,11 +991,11 @@ void main(){
   float e = 0.0012;
   vec3 pk = mix(vec3(0.60, 0.50, 0.47), vec3(0.42, 0.37, 0.36), nz(vec2(hz.x * 60.0 + hz.y * 23.0, el * 90.0)));
   pk = mix(pk, vec3(0.95), smoothstep(0.55, 0.75, nz(vec2(hz.x * 30.0, el * 50.0 + hz.y * 30.0))) * smoothstep(r0 * 0.45, r0, el) * 0.8);
-  col = mix(col, mix(pk, uFog, 0.45), smoothstep(r0 + e, r0 - e, el));
-  col = mix(col, mix(vec3(0.42, 0.51, 0.62), uFog, 0.5), smoothstep(r1 + e, r1 - e, el));
+  col = mix(col, mix(pk, uFog, 0.45 + 0.2 * uHz), smoothstep(r0 + e, r0 - e, el));
+  col = mix(col, mix(vec3(0.42, 0.51, 0.62), uFog, 0.5 + 0.28 * uHz), smoothstep(r1 + e, r1 - e, el));
   vec3 mid = mix(vec3(0.20, 0.31, 0.27), vec3(0.47, 0.45, 0.38), prog) * (0.85 + 0.3 * nz(vec2(hz.x * 80.0 + hz.y * 31.0, el * 160.0)));
-  col = mix(col, mix(mid, uFog, 0.4), smoothstep(r2 + e, r2 - e, el));
-  col = mix(col, mix(uFog, vec3(0.36, 0.45, 0.42), 0.45), clamp((r2 - 0.03 - el) * 5.0, 0.0, 1.0) * 0.8);
+  col = mix(col, mix(mid, uFog, 0.4 + 0.47 * uHz), smoothstep(r2 + e, r2 - e, el));
+  col = mix(col, mix(uFog, vec3(0.36, 0.45, 0.42), 0.45 - 0.33 * uHz), clamp((r2 - 0.03 - el) * 5.0, 0.0, 1.0) * 0.8);
   o = vec4(col, 1.0);
 }`,
   treeV: `#version 300 es
@@ -1003,7 +1072,7 @@ function drawGL() {
   VPm[8] = p0 * r0z; VPm[9] = p5 * r1z - o * r2z; VPm[10] = p10 * r2z; VPm[11] = -r2z;
   VPm[12] = p0 * tx; VPm[13] = p5 * ty - o * tz; VPm[14] = p10 * tz + p14; VPm[15] = -tz;
   RTm[0] = r0x; RTm[1] = r0y; RTm[2] = r0z; RTm[3] = r1x; RTm[4] = r1y; RTm[5] = r1z; RTm[6] = r2x; RTm[7] = r2y; RTm[8] = r2z;
-  const prog = clamp((c.y - 2800) / 1500, 0, 1), fogDist = 1000 + 1100 * prog, fr = FOG[0] / 255, fg = FOG[1] / 255, fb = FOG[2] / 255;
+  const prog = clamp((c.y - 2800) / 1500, 0, 1), fogDist = m.real ? 1500 + 1500 * prog : 1000 + 1100 * prog, fr = FOG[0] / 255, fg = FOG[1] / 255, fb = FOG[2] / 255;
   const yb = Math.min(H, Math.ceil(cy + 0.3 * Math.min(H, W * 0.62) * S.zoom));
   gl.viewport(0, 0, W, H); gl.disable(gl.CULL_FACE); gl.enable(gl.SCISSOR_TEST); gl.scissor(0, H - yb, W, yb);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -1016,7 +1085,7 @@ function drawGL() {
   gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform2f(P.u.uOrg, ox, oz); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3fv(P.u.uSun, SUN3);
   gl.uniform3f(P.u.uFog, fr, fg, fb); gl.uniform1f(P.u.uFogD, fogDist); gl.uniform1f(P.u.uMixed, S.mixed ? 1 : 0);
   for (let q = 0; q < nv; q++) { const ch = m.chunks[vis[q]]; gl.drawElements(gl.TRIANGLES, ch.ic, gl.UNSIGNED_INT, ch.io * 4); }
-  for (let k = 0; k < m.tiles.length; k++) { const tl = m.tiles[k], dx = tl.x - cam.x, dz = tl.z - cam.z; if (dx * dx + dz * dz > 2500 * 2500 || dx * fx + dz * fz < -tl.r) continue; gl.drawElements(gl.TRIANGLES, tl.ic, gl.UNSIGNED_INT, tl.io * 4); }
+  for (let k = 0; k < m.tiles.length; k++) { const tl = m.tiles[k], dx = tl.x - cam.x, dz = tl.z - cam.z; if (dx * dx + dz * dz > tl.dm * tl.dm || dx * fx + dz * fz < -tl.r) continue; gl.drawElements(gl.TRIANGLES, tl.ic, gl.UNSIGNED_INT, tl.io * 4); }
   // rails, posts, gantries
   P = PRG.prop; gl.useProgram(P.p); gl.bindVertexArray(glBuf.pv);
   gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3f(P.u.uFog, fr, fg, fb); gl.uniform1f(P.u.uFogD, fogDist);
@@ -1030,7 +1099,7 @@ function drawGL() {
   // sky
   P = PRG.sky; gl.useProgram(P.p); gl.bindVertexArray(glBuf.sv);
   const ex = T.X[T.N - 1] - c.x, ez = T.Z[T.N - 1] - c.z, dS = Math.hypot(ex, ez) || 1;
-  gl.uniformMatrix3fv(P.u.uRT, false, RTm); gl.uniform3f(P.u.uK, W / (2 * f), H / (2 * f), o); gl.uniform3fv(P.u.uSun, SUN3); gl.uniform3f(P.u.uFog, fr, fg, fb);
+  gl.uniformMatrix3fv(P.u.uRT, false, RTm); gl.uniform3f(P.u.uK, W / (2 * f), H / (2 * f), o); gl.uniform1f(P.u.uHz, m.real ? 1 : 0); gl.uniform3fv(P.u.uSun, SUN3); gl.uniform3f(P.u.uFog, fr, fg, fb);
   gl.uniform4f(P.u.uPk, ex / dS, ez / dS, Math.atan2(Math.max(0, T.Y[T.N - 1] - c.y) + 120, dS + 500) * clamp(dS / 500, 0, 1), prog);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   gl.bindVertexArray(null); gl.disable(gl.SCISSOR_TEST);
@@ -1240,7 +1309,7 @@ function syncOpts() {
 }
 function fillStarts() {
   const sel = $('selStart'); sel.innerHTML = '';
-  const opts = track.isStd ? [[0, 'Start line (timed)'], [0.497, 'Glen Cove (practice)'], [0.668, "The W's (practice)"], [0.747, "Devil's Playground (practice)"], [0.885, 'Boulder Park (practice)']]
+  const opts = track.isStd ? [[0, 'Start line (timed)']].concat(LANDMARKS.filter(l => l[2]).map(l => [(l[0] * MI / track.len).toFixed(4), l[1] + ' (practice)']))
     : [[0, 'Start (timed)'], [0.25, '25% (practice)'], [0.5, '50% (practice)'], [0.75, '75% (practice)']];
   for (const o of opts) { const e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; sel.appendChild(e); }
 }
