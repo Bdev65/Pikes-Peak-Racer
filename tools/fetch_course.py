@@ -47,27 +47,62 @@ def dist(a, b):
 
 
 # ------------------------------------------------------------------ road
-def fetch_osm():
-    s, w, n, e = SEARCH
-    q = (f'[out:json][timeout:120];way["highway"]'
-         f'["highway"!~"footway|path|steps|cycleway|bridleway|pedestrian|construction|proposed|corridor"]'
-         f'({s},{w},{n},{e});out geom;')
+def overpass(q, what):
     last = None
     for url in OVERPASS:
         for attempt in range(2):
             try:
-                log(f'Overpass: {url}')
+                log(f'Overpass ({what}): {url}')
                 r = requests.post(url, data={'data': q}, headers=UA, timeout=180)
                 r.raise_for_status()
-                ways = [x for x in r.json()['elements'] if x['type'] == 'way' and 'geometry' in x]
-                log(f'  {len(ways)} road ways')
-                if ways:
-                    return ways
+                els = r.json()['elements']
+                log(f'  {len(els)} elements')
+                if els:
+                    return els
             except Exception as ex:  # noqa: BLE001
                 last = ex
                 log(f'  failed: {ex}')
                 time.sleep(10)
     raise RuntimeError(f'Could not reach any Overpass server: {last}')
+
+
+def fetch_osm():
+    s, w, n, e = SEARCH
+    q = (f'[out:json][timeout:120];way["highway"]'
+         f'["highway"!~"footway|path|steps|cycleway|bridleway|pedestrian|construction|proposed|corridor"]'
+         f'({s},{w},{n},{e});out geom;')
+    return [x for x in overpass(q, 'roads') if x['type'] == 'way' and 'geometry' in x]
+
+
+def fetch_places(pts):
+    """Named places and mileposts near the course, with their distance along it (for in-game landmark names)."""
+    lats = [p[0] for p in pts]; lons = [p[1] for p in pts]
+    s, w, n, e = min(lats) - 0.004, min(lons) - 0.005, max(lats) + 0.004, max(lons) + 0.005
+    q = (f'[out:json][timeout:90];(node["name"]({s},{w},{n},{e});node["highway"="milestone"]({s},{w},{n},{e});'
+         f'way["name"]["highway"!~"."]({s},{w},{n},{e});way["name"]["highway"~"path|footway|track|service"]({s},{w},{n},{e}););'
+         f'out center tags;')
+    els = overpass(q, 'places')
+    cum = [0.0]
+    for a, b in zip(pts, pts[1:]):
+        cum.append(cum[-1] + dist(a, b))
+    P = np.array(pts)
+    kx = 111320 * math.cos(math.radians(P[0, 0]))
+    out = []
+    for el in els:
+        c = el if el['type'] == 'node' else el.get('center')
+        if not c or 'lat' not in c:
+            continue
+        d = np.hypot((P[:, 0] - c['lat']) * 111132, (P[:, 1] - c['lon']) * kx)
+        k = int(np.argmin(d))
+        if d[k] > 300:
+            continue
+        tg = el.get('tags', {})
+        out.append({'name': tg.get('name', ''), 'mile': round(cum[k] / 1609.344, 3), 'off_m': round(float(d[k])), 'lat': c['lat'], 'lon': c['lon'],
+                    'type': el['type'], 'tags': {k2: v for k2, v in tg.items() if k2 in ('highway', 'place', 'natural', 'tourism', 'amenity', 'distance', 'ref', 'ele', 'railway', 'leisure', 'waterway')}})
+    out.sort(key=lambda x: x['mile'])
+    with open(os.path.join(OUT, 'places.json'), 'w') as f:
+        json.dump(out, f, indent=0)
+    log(f'  {len(out)} named places within 300 m of the course')
 
 
 def course_from_ways(ways):
@@ -335,6 +370,11 @@ def main():
     b = gb
     ele = sample(dem, b, pts)
     course = write_outputs(pts, ele, dem, b, src)
+    try:
+        log('== Places')
+        fetch_places(pts)
+    except Exception as ex:  # noqa: BLE001
+        log(f'  places skipped: {ex}')
     z0, z1 = course[0][2], course[-1][2]
     turns = count_turns(pts)
     rows = [
