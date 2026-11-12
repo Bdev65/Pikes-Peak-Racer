@@ -143,20 +143,27 @@ def bounds_for(pts, margin_m=900):
 
 
 def fetch_usgs(b, res_m=10.0):
+    """Ask the 3DEP ImageServer for a grid, then read back the extent it actually used
+    (the server enlarges the requested box to keep its pixels square)."""
     s, w, n, e = b
-    lat0 = (s + n) / 2
-    W = int(round((e - w) * 111320 * math.cos(math.radians(lat0)) / res_m))
     H = int(round((n - s) * 111132 / res_m))
+    W = int(round(H * (e - w) / (n - s)))            # square pixels in degrees, so the box is not adjusted
     url = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage'
     params = {'bbox': f'{w},{s},{e},{n}', 'bboxSR': 4326, 'imageSR': 4326, 'size': f'{W},{H}', 'format': 'tiff',
               'pixelType': 'F32', 'compression': 'None', 'noDataInterpretation': 'esriNoDataMatchAny',
-              'interpolation': 'RSP_BilinearInterpolation', 'f': 'image'}
+              'interpolation': 'RSP_BilinearInterpolation', 'f': 'json'}
     import tifffile
     for attempt in range(3):
         try:
             log(f'USGS 3DEP: {W} x {H} grid (attempt {attempt + 1})')
-            r = requests.get(url, params=params, headers=UA, timeout=300)
-            r.raise_for_status()
+            r = requests.get(url, params=params, headers=UA, timeout=300); r.raise_for_status()
+            meta = r.json()
+            if 'href' not in meta:
+                raise RuntimeError('unexpected reply: ' + json.dumps(meta)[:200])
+            ex = meta['extent']
+            got = (ex['ymin'], ex['xmin'], ex['ymax'], ex['xmax'])
+            log(f"  server extent {got}, {meta.get('width')} x {meta.get('height')}")
+            r = requests.get(meta['href'], headers=UA, timeout=300); r.raise_for_status()
             if not r.content.startswith((b'II', b'MM')):
                 raise RuntimeError('USGS did not return a TIFF: ' + r.text[:200])
             a = tifffile.imread(io.BytesIO(r.content)).astype(np.float64)
@@ -165,11 +172,20 @@ def fetch_usgs(b, res_m=10.0):
             a[(a < -1000) | (a > 9000)] = np.nan
             if np.isnan(a).mean() > 0.01:
                 raise RuntimeError(f'{np.isnan(a).mean() * 100:.1f}% of the grid has no data')
-            return a, 'USGS 3D Elevation Program (3DEP), 1/3 arc-second, via the National Map ImageServer'
+            return a, 'USGS 3D Elevation Program (3DEP), 1/3 arc-second, via the National Map ImageServer', got
         except Exception as ex:  # noqa: BLE001
             log(f'  failed: {ex}')
             time.sleep(15)
-    return None, None
+    return None, None, None
+
+
+def check_dem(dem, b, src):
+    """The summit is a surveyed 4,302 m (14,115 ft): a misplaced or bad grid shows up here."""
+    z = float(sample(dem, b, [SUMMIT])[0])
+    hi = float(np.nanmax(dem))
+    log(f'  check: grid height at the summit marker {z:.0f} m, highest point in grid {hi:.0f} m (expect ~4302)')
+    if abs(z - 4302) > 25 or abs(hi - 4302) > 25:
+        raise RuntimeError(f'{src}: summit reads {z:.0f} m, highest point {hi:.0f} m; expected about 4302 m')
 
 
 def fetch_terrarium(b, z=14):
@@ -197,7 +213,7 @@ def fetch_terrarium(b, z=14):
     px = (lons + 180) / 360 * 2 ** z * 256 - tx0 * 256
     py = (1 - np.arcsinh(np.tan(np.radians(lats))) / np.pi) / 2 * 2 ** z * 256 - ty0 * 256
     PX, PY = np.meshgrid(px, py)
-    return bilinear(mosaic, PX - 0.5, PY - 0.5), 'AWS Terrain Tiles (Terrarium), zoom 14 (mostly USGS 3DEP in the US)'
+    return bilinear(mosaic, PX - 0.5, PY - 0.5), 'AWS Terrain Tiles (Terrarium), zoom 14 (mostly USGS 3DEP in the US)', b
 
 
 def bilinear(a, fx, fy):
@@ -307,9 +323,16 @@ def main():
     log(f'  course: {len(pts)} points, {length / 1609.344:.2f} mi')
     b = bounds_for(pts)
     log('== Terrain')
-    dem, src = fetch_usgs(b)
-    if dem is None:
-        dem, src = fetch_terrarium(b)
+    dem, src, gb = fetch_usgs(b)
+    try:
+        if dem is None:
+            raise RuntimeError('USGS unavailable')
+        check_dem(dem, gb, src)
+    except Exception as ex:  # noqa: BLE001
+        log(f'  {ex}; trying Terrain Tiles')
+        dem, src, gb = fetch_terrarium(b)
+        check_dem(dem, gb, src)
+    b = gb
     ele = sample(dem, b, pts)
     course = write_outputs(pts, ele, dem, b, src)
     z0, z1 = course[0][2], course[-1][2]
@@ -319,7 +342,7 @@ def main():
         ('Start elevation', f'{z0 / 0.3048:,.0f} ft', f"{PUBLISHED['start_ft']:,} ft"),
         ('Finish elevation', f'{z1 / 0.3048:,.0f} ft', f"{PUBLISHED['finish_ft']:,} ft (summit)"),
         ('Climb', f'{(z1 - z0) / 0.3048:,.0f} ft', f"{PUBLISHED['finish_ft'] - PUBLISHED['start_ft']:,} ft"),
-        ('Corners (rough count)', str(turns), f"{PUBLISHED['turns']}"),
+        ('Corners (rough count)', str(turns), f"{PUBLISHED['turns']} (official count, includes gentle bends)"),
     ]
     rep = ['# Course data report', '', f'Fetched {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC.', '',
            '| | From the data | Published |', '|---|---|---|'] + [f'| {a} | {b_} | {c} |' for a, b_, c in rows] + [
