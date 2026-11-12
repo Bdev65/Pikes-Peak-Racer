@@ -11,14 +11,15 @@ html,body{margin:0;height:100%;background:#0b0d10;color:var(--ink);overflow:hidd
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none;touch-action:none}
 #load{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:#0b0d10;color:var(--dim);font-size:15px}
 #c,#g{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
-.bar{position:fixed;top:6px;display:flex;gap:6px;z-index:5}
-#barL{left:8px}#barR{right:8px}
+.bar{position:fixed;top:16px;display:flex;gap:8px;z-index:30}
+#barL{left:12px}#barR{right:12px}
+@media (orientation:landscape) and (max-height:500px){.bar{top:22px}#barL{left:20px}#barR{right:20px}}
 .bar button,#shift button{font:600 13px system-ui,sans-serif;color:var(--ink);background:rgba(14,17,21,.62);
-  border:1px solid var(--line);border-radius:9px;min-width:42px;height:36px;padding:0 10px}
-.bar button:active,#shift button:active{background:rgba(244,160,32,.5)}
+  border:1px solid var(--line);border-radius:10px;min-width:48px;height:44px;padding:0 12px;touch-action:none}
+.bar button.down,#shift button.down,.bar button:active,#shift button:active{background:rgba(244,160,32,.5)}
 #zv{font:600 12px system-ui,sans-serif;color:var(--dim);align-self:center;min-width:36px;text-align:center;
   font-variant-numeric:tabular-nums;text-shadow:0 1px 2px #000}
-#shift{position:fixed;right:8px;top:30%;display:none;flex-direction:column;gap:8px;z-index:5}
+#shift{position:fixed;right:20px;top:30%;display:none;flex-direction:column;gap:8px;z-index:30}
 #shift button{width:52px;height:46px;font-size:18px}
 #menu{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
   background:rgba(6,8,10,.55);padding:10px;overflow:auto;touch-action:pan-y}
@@ -868,6 +869,7 @@ function resize() {
   sc = Math.min(dpr, Math.sqrt(1.5e6 / (cw * chh))) * qual; W = cv.width = gcv.width = Math.round(cw * sc); H = cv.height = gcv.height = Math.round(chh * sc);
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => { setTimeout(resize, 120); setTimeout(resize, 450); });
 const FOG = [186, 202, 216], NEAR = 0.35, VIEW = 620;
 let fogD = 340;
 const cam = { x: 0, y: 0, z: 0, sy: 0, cyw: 1, sp: 0, cp: 1, yaw: 0, pitch: 0 };
@@ -1580,11 +1582,21 @@ function fillStarts() {
 function loadCourse(pts, isStd) { track = buildTrack(pts, isStd); if (GLOK) glUpload(track); fillStarts(); newRun(0); }
 $('bGo').onclick = () => { audioInit(); newRun(+$('selStart').value); closeMenu(); };
 $('bResume').onclick = () => { audioInit(); closeMenu(); };
-$('bMenu').onclick = () => { if (mode === 'drive') openMenu(run.state === 'done' ? 'done' : 'pause'); };
-$('bReset').onclick = () => { if (mode === 'drive' && run.state !== 'done') resetToRoad(); };
+/* In-game buttons act on the finger lifting (pointerup) rather than on a synthesised click, which iOS drops
+   whenever the finger drifts a little or a second finger is down on the pedals or steering. */
+function tapBtn(id, fn) {
+  const el = $(id); let pid = null;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); pid = e.pointerId; el.classList.add('down'); try { el.setPointerCapture(e.pointerId); } catch (_) { } });
+  el.addEventListener('pointerup', e => { if (e.pointerId !== pid) return; pid = null; el.classList.remove('down'); e.preventDefault(); fn(); });
+  const end = () => { pid = null; el.classList.remove('down'); };
+  el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
+  el.addEventListener('click', e => { e.preventDefault(); if (e.detail === 0) fn(); });   // keyboard Enter / Space only
+}
+tapBtn('bMenu', () => { if (mode === 'drive') openMenu(run.state === 'done' ? 'done' : 'pause'); });
+tapBtn('bReset', () => { if (mode === 'drive' && run.state !== 'done') resetToRoad(); });
 function zoomBy(d) { S.zoom = clamp(Math.round((S.zoom + d) * 10) / 10, 1, 2.7); saveSet(); syncOpts(); }
-$('bZi').onclick = () => zoomBy(0.1); $('bZo').onclick = () => zoomBy(-0.1);
-$('bUp').onclick = () => shift(1); $('bDn').onclick = () => shift(-1);
+tapBtn('bZi', () => zoomBy(0.1)); tapBtn('bZo', () => zoomBy(-0.1));
+tapBtn('bUp', () => shift(1)); tapBtn('bDn', () => shift(-1));
 $('oGear').onclick = () => { S.auto = !S.auto; saveSet(); syncOpts(); };
 $('oSurf').onclick = () => { S.mixed = !S.mixed; saveSet(); best = store(bestKey()); openMenu(mode === 'pause' ? 'pause' : 'menu'); };
 $('oUnit').onclick = () => { S.mph = !S.mph; saveSet(); syncOpts(); };
