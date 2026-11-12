@@ -296,6 +296,23 @@ def count_turns(pts):
     return turns
 
 
+def write_grid(dem, b, cell_m, name, src):
+    """Save an elevation grid for the game: block-averaged to about cell_m, uint16 decimetres."""
+    s, w, n, e = b
+    H, W = dem.shape
+    f = max(1, int(round(cell_m / ((n - s) * 111132 / H))))
+    g = np.nanmean(dem[:H // f * f, :W // f * f].reshape(H // f, f, W // f, f), axis=(1, 3))
+    g = np.nan_to_num(g, nan=float(np.nanmin(dem)))
+    q = np.clip(np.round(g * 10), 0, 65535).astype('<u2')
+    q.tofile(os.path.join(OUT, name + '.bin'))
+    hdr = {'south': n - (n - s) * (H // f * f) / H, 'west': w, 'north': n, 'east': w + (e - w) * (W // f * f) / W,
+           'width': int(q.shape[1]), 'height': int(q.shape[0]), 'format': 'uint16 little-endian, row-major, first row is the north edge',
+           'units': 'decimetres above sea level', 'cell_m': round((n - s) * 111132 / H * f, 2), 'source': src}
+    with open(os.path.join(OUT, name + '.json'), 'w') as fh:
+        json.dump(hdr, fh, indent=1)
+    log(f'  {name}: {q.shape[1]} x {q.shape[0]} cells of {hdr["cell_m"]} m')
+
+
 def write_outputs(pts, ele, dem, b, src_dem):
     os.makedirs(OUT, exist_ok=True)
     # light smoothing of road elevation: a 10 m grid mixes the road with the slope beside it
@@ -370,6 +387,15 @@ def main():
     b = gb
     ele = sample(dem, b, pts)
     course = write_outputs(pts, ele, dem, b, src)
+    try:
+        log('== Wider terrain for the distant view (3 km around the course, ~60 m cells)')
+        ob = bounds_for(pts, 3000)
+        odem, osrc, ogb = fetch_usgs(ob, 30.0)
+        if odem is None:
+            odem, osrc, ogb = fetch_terrarium(ob, 12)
+        write_grid(odem, ogb, 60.0, 'terrain_outer', osrc)
+    except Exception as ex:  # noqa: BLE001
+        log(f'  wider terrain skipped: {ex}')
     try:
         log('== Places')
         fetch_places(pts)
