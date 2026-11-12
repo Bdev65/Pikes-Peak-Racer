@@ -5,6 +5,20 @@ let t = fs.readFileSync(d + '/template.html', 'utf8');
 const course = JSON.parse(fs.readFileSync(data + 'course.json', 'utf8'));
 const places = fs.existsSync(data + 'places.json') ? JSON.parse(fs.readFileSync(data + 'places.json', 'utf8')) : [];
 
+// ---- start line. The race starts at the highway's Mile 7 marker. OpenStreetMap has the Mile 8 marker but not Mile 7,
+// so the line is placed one mile of road below Mile 8. The game draws its start line 40 m into the course, so the
+// course is trimmed to begin 40 m before that point (this also drops the junction stub at the very start of the fetched road).
+const LEAD = 40;
+(function () {
+  const m8 = places.find(p => p.tags.highway === 'milestone' && p.tags.distance === '8 mi'); if (!m8) { console.log('no Mile 8 marker: start line left at the start of the data'); return; }
+  const startM = (m8.mile - 1) * MI, trim = startM - LEAD; if (!(trim > 0)) return;
+  const k = 111320 * Math.cos(course[0][0] * Math.PI / 180), dist = (a, b) => Math.hypot((b[1] - a[1]) * k, (b[0] - a[0]) * 111132);
+  let acc = 0, i = 1; for (; i < course.length; i++) { const d = dist(course[i - 1], course[i]); if (acc + d >= trim) { const f = (trim - acc) / d, a = course[i - 1], b = course[i]; course.splice(0, i, [+(a[0] + f * (b[0] - a[0])).toFixed(6), +(a[1] + f * (b[1] - a[1])).toFixed(6), +(a[2] + f * (b[2] - a[2])).toFixed(1)]); break; } acc += d; }
+  for (const p of places) p.mile = +(p.mile - trim / MI).toFixed(3);
+  let len = 0; for (let q = 1; q < course.length; q++) len += dist(course[q - 1], course[q]);
+  console.log('start line at ' + (startM / MI).toFixed(3) + ' mi of the fetched road; course trimmed by ' + Math.round(trim) + ' m; start to end of road ' + ((len - LEAD) / 1000).toFixed(2) + ' km; first point', course[0]);
+})();
+
 // ---- landmarks: only names whose position comes from the data
 const lm = [];
 const pick = (name, test) => { const c = places.filter(p => p.name === name && (!test || test(p))).sort((a, b) => a.off_m - b.off_m)[0]; return c ? c.mile : null; };
@@ -13,7 +27,7 @@ for (const [name, label, start, test] of [
   ["Devil's Playground", "Devil's Playground", 1, p => p.tags.amenity], ['Little Pikes Peak', 'Little Pikes Peak', 0], ['Boulder Park', 'Boulder Park', 1]]) {
   const m = pick(name, test); if (m != null) lm.push([m, label, start]);
 }
-for (const p of places) if (p.tags.highway === 'milestone' && /^\d+ mi$/.test(p.tags.distance || '')) lm.push([p.mile, 'Mile ' + parseInt(p.tags.distance) + (p.name ? ' · ' + p.name : ''), 0]);
+for (const p of places) if (p.mile > 0.05 && p.tags.highway === 'milestone' && /^\d+ mi$/.test(p.tags.distance || '')) lm.push([p.mile, 'Mile ' + parseInt(p.tags.distance) + (p.name ? ' · ' + p.name : ''), 0]);
 // A practice start at the first stack of hairpins between Glen Cove and Devil's Playground, found from the road shape
 (function () {
   const lo = pick('Glen Cove', p => p.tags.place), hi = pick("Devil's Playground", p => p.tags.amenity); if (lo == null || hi == null) return;

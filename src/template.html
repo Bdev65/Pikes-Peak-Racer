@@ -324,7 +324,7 @@ function buildTrack(src, isStd) {
       const side = k < HV ? -1 : 1, d = DG[k < HV ? HV - 1 - k : k - HV]; prof(i, side, d, o2);
       const x = X[i] + CH[i] * o2[0], z = Z[i] - SH[i] * o2[0]; let y = Y[i] + o2[1];
       if (d >= 4) { hPoint(x, z, i); y = hp.h - (d > 20 ? 3 : 0) - 8 * (1 - sstep(HW + 1, HW + 4, hp.fd)); }
-      const b = (i * NV + k) * 9; vtx[b] = x; vtx[b + 1] = y; vtx[b + 2] = z; vtx[b + 6] = o2[0]; vtx[b + 7] = TD[i]; vtx[b + 8] = SURF[i];
+      const b = (i * NV + k) * 9; vtx[b] = x; vtx[b + 1] = y; vtx[b + 2] = z; vtx[b + 6] = o2[0]; vtx[b + 7] = i * SEG; vtx[b + 8] = SURF[i];
     }
     for (let i = 0; i < N; i++) for (let k = 0; k < NV; k++) {
       const b = (i * NV + k) * 9, a0 = (Math.max(0, i - 1) * NV + k) * 9, a1 = (Math.min(N - 1, i + 1) * NV + k) * 9, c0 = (i * NV + Math.max(0, k - 1)) * 9, c1 = (i * NV + Math.min(NV - 1, k + 1)) * 9;
@@ -356,9 +356,9 @@ function buildTrack(src, isStd) {
     }
     const idx = new Uint32Array(idxR.length + idxA.length); idx.set(idxR); idx.set(idxA, idxR.length);
     // --- instances: x, y, z, height, kind, tint
-    const inst = [], CHN = 48, chunks = [], SL = 18;
+    const inst = [], rocks = [], shad = [], CHN = 48, chunks = [], SL = 18;
     for (let c = 0; c * CHN < N - 1; c++) {
-      const i0 = c * CHN, i1 = Math.min(N - 1, i0 + CHN), mid = (i0 + i1) >> 1, no = inst.length / 6;
+      const i0 = c * CHN, i1 = Math.min(N - 1, i0 + CHN), mid = (i0 + i1) >> 1, no = inst.length / 6, ro = rocks.length / 6, so = shad.length / 6;
       for (let i = i0; i < i1; i++) for (let k = 0; k < SL; k++) {
         const s = i * SL + k + 0.5, side = k & 1 ? 1 : -1, r1 = hash(s * 3.3 + 101), r2 = hash(s * 5.9 + 102), r3 = hash(s * 7.1 + 103), r4 = hash(s * 11.9 + 104);
         let h = 0, kind = 0, d = 0;
@@ -370,9 +370,14 @@ function buildTrack(src, isStd) {
         hPoint(x, z, -1); if (hp.d < HW + (h > 3 ? 3.2 : 1.8)) continue;   // never on or over any stretch of road
         const y = hp.d < HW + 16 ? hp.h : gridH(x, z); if (!(y === y)) continue;
         if (kind <= 4 && hash(s * 17.7) > (3585 - y) / 110) continue;       // no trees above the real tree line
+        if (kind === 6 || kind === 7) { rocks.push(x, y + h * 0.16, z, h * 0.62, hash(s * 21.1) * 6.283, hash(s * 23.7)); continue; }
         inst.push(x, y - (h > 3 ? 0.25 : 0.05), z, h, kind, 0.82 + 0.36 * hash(s * 13.3));
+        if (kind <= 5) { const dR = hp.d, rr = kind === 5 ? 0.7 * h : Math.min(0.26 * h + 0.5, 3.5, dR - HW - 0.2); if (rr > 0.4) {
+          const hAt = (px, pz) => { if (dR < HW + 24) { hPoint(px, pz, -1); return hp.h; } return gridH(px, pz); };
+          let gx = (hAt(x + 1.5, z) - y) / 1.5, gz = (hAt(x, z + 1.5) - y) / 1.5; if (!(gx === gx)) gx = 0; if (!(gz === gz)) gz = 0;
+          shad.push(x, y, z, rr, clamp(gx, -1.5, 1.5), clamp(gz, -1.5, 1.5)); } }
       }
-      chunks.push({ x: X[mid], z: Z[mid], r: 300, io: i0 * (NV - 1) * 6, ic: (i1 - i0) * (NV - 1) * 6, no, nc: inst.length / 6 - no });
+      chunks.push({ x: X[mid], z: Z[mid], r: 300, io: i0 * (NV - 1) * 6, ic: (i1 - i0) * (NV - 1) * 6, no, nc: inst.length / 6 - no, ro, rc: rocks.length / 6 - ro, so, sc: shad.length / 6 - so });
     }
     // --- rails, marker posts, start / finish gantries: position + colour triangles
     const pr = [], tri = (a, b, c, col) => { for (const p of [a, b, c]) pr.push(p[0], p[1], p[2], col[0], col[1], col[2]); }, quad = (a, b, c, d, col, col2) => { tri(a, b, c, col); tri(a, c, d, col2 || col); };
@@ -381,8 +386,12 @@ function buildTrack(src, isStd) {
     for (let i = 0; i < N - 1; i++) for (let sd = 0; sd < 2; sd++) {
       const k = sd ? HV + 1 : HV - 2, bit = sd ? 2 : 1;
       if (RAIL[i] & RAIL[i + 1] & bit) { quad(sv(i, k, 0.44), sv(i + 1, k, 0.44), sv(i + 1, k, 0.6), sv(i, k, 0.6), [0.5, 0.52, 0.54]); quad(sv(i, k, 0.6), sv(i + 1, k, 0.6), sv(i + 1, k, 0.78), sv(i, k, 0.78), [0.72, 0.74, 0.76]); if (i % 2 === 0) post(sv(i, k, 0), 0.13, 0, 0.8, [0.36, 0.33, 0.3], HD[i]); }
-      else if (i % 6 === 0 && !(RAIL[i] & bit)) { const p = sv(i, k, 0); post(p, 0.09, 0, 0.85, [0.9, 0.9, 0.88], HD[i]); post(p, 0.1, 0.85, 1.02, [0.8, 0.2, 0.14], HD[i]); }
+      else if (i % 6 === 0 && !(RAIL[i] & bit)) { const p = sv(i, k, 0); if (Y[i] > 3560) { post(p, 0.07, 0, 2.6, [0.92, 0.42, 0.1], HD[i]); post(p, 0.08, 2.1, 2.3, [0.95, 0.95, 0.92], HD[i]); } else { post(p, 0.09, 0, 0.85, [0.9, 0.9, 0.88], HD[i]); post(p, 0.1, 0.85, 1.02, [0.8, 0.2, 0.14], HD[i]); } }
     }
+    { let lastSign = -99; for (let i = 20; i < N - 30; i++) { if (Math.abs(CV[i + 12]) < 0.04 || Math.abs(CV[i]) > 0.014 || i - lastSign < 40) continue; lastSign = i;
+        const p = sv(i, HV + 2, 0), rx = CH[i] * 0.5, rz = -SH[i] * 0.5, fx_ = -SH[i] * 0.03, fz_ = -CH[i] * 0.03, cy_ = p[1] + 2.25, D = (m, ox, oz) => [[p[0] - rx * m + ox, cy_, p[2] - rz * m + oz], [p[0] + ox, cy_ - 0.5 * m, p[2] + oz], [p[0] + rx * m + ox, cy_, p[2] + rz * m + oz], [p[0] + ox, cy_ + 0.5 * m, p[2] + oz]];
+        post(p, 0.08, 0, 2.3, [0.42, 0.44, 0.46], HD[i]); const a = D(1.08, 0, 0), b = D(0.94, fx_, fz_); quad(a[0], a[1], a[2], a[3], [0.08, 0.08, 0.08]); quad(b[0], b[1], b[2], b[3], [0.95, 0.76, 0.1]);
+        const sgn = CV[i + 12] > 0 ? 1 : -1, A = (u, v) => [p[0] + rx * u * sgn * 2 + fx_ * 2, cy_ + v, p[2] + rz * u * sgn * 2 + fz_ * 2]; tri(A(0.3, 0), A(-0.02, 0.26), A(-0.02, -0.26), [0.08, 0.08, 0.08]); quad(A(-0.3, 0.07), A(0, 0.07), A(0, -0.07), A(-0.3, -0.07), [0.08, 0.08, 0.08]); } }
     for (const gI of [Math.round(40 / SEG), Math.round((len - 45) / SEG)]) {
       const L = sv(gI, HV - 2, 0), R = sv(gI, HV + 1, 0), lp = t => [lerp(L[0], R[0], t), lerp(L[1], R[1], t), lerp(L[2], R[2], t)];
       post(L, 0.26, 0, 5.7, [0.25, 0.25, 0.28], HD[gI]); post(R, 0.26, 0, 5.7, [0.25, 0.25, 0.28], HD[gI]);
@@ -391,9 +400,9 @@ function buildTrack(src, isStd) {
       for (let row = 0; row < 2; row++) { const e0 = sv(gI + row, HV - 1, 0.03), e1 = sv(gI + row, HV, 0.03), f0 = sv(gI + row + 1, HV - 1, 0.03), f1 = sv(gI + row + 1, HV, 0.03);
         for (let k = 0; k < 8; k++) for (let h = 0; h < 2; h++) { const t0 = h / 2, t1 = (h + 1) / 2, c2 = (k + row + h) & 1 ? [0.92, 0.92, 0.92] : [0.07, 0.07, 0.08]; quad(mx(mx(e0, e1, k / 8), mx(f0, f1, k / 8), t0), mx(mx(e0, e1, (k + 1) / 8), mx(f0, f1, (k + 1) / 8), t0), mx(mx(e0, e1, (k + 1) / 8), mx(f0, f1, (k + 1) / 8), t1), mx(mx(e0, e1, k / 8), mx(f0, f1, k / 8), t1), c2); } }
     }
-    glm = { vtx, idx, inst: new Float32Array(inst), props: new Float32Array(pr), chunks, tiles, vis: new Int32Array(chunks.length), real: !!dem, grid: { gx0, gz0, gs, GW, GH, gid, base, NV, ng, nf } };
+    glm = { vtx, idx, rocks: new Float32Array(rocks.length ? rocks : 6), shad: new Float32Array(shad.length ? shad : 6), inst: new Float32Array(inst), props: new Float32Array(pr), chunks, tiles, vis: new Int32Array(chunks.length), real: !!dem, grid: { gx0, gz0, gs, GW, GH, gid, base, NV, ng, nf } };
   }
-  return { glm, N, X, Z, Y, HD, SH, CH, GR, CV, CM, CS, SURF, TD, CN, VERT, TREE, RAIL, len, isStd, key: isStd ? 'std2' : 'gpx' + N,
+  return { glm, N, X, Z, Y, HD, SH, CH, GR, CV, CM, CS, SURF, TD, CN, VERT, TREE, RAIL, len, isStd, key: isStd ? 'std3' : 'gpx' + N,
     startD: 40, finishD: len - 45, splits: [0.499 * len, 0.749 * len], mm, mw, mh, mapX, mapY, lms };
 }
 
@@ -698,9 +707,10 @@ function buildArt() {
   texOK = !!MAT && typeof TEX.shade.p.setTransform === 'function';
   }
   // ---- sprites: 0 spruce, 1 fir, 2 pine, 3 aspen, 4 dead snag, 5 shrub, 6/7 granite boulders, 8 grass tuft
+  const KS = GLOK ? 2 : 1, mkS = (w, h) => { const c = mkC(w * KS, h * KS); c.getContext('2d').scale(KS, KS); return c; };
   const bough = (g, x, y, sd, w, dr, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(x, y - 5); g.quadraticCurveTo(x + sd * w * 0.55, y - 5, x + sd * w, y + dr); g.quadraticCurveTo(x + sd * w * 0.55, y + dr * 0.5 + 6, x, y + 10); g.closePath(); g.fill(); };
   function conifer(kind) {
-    const c = mkC(128, 256), g = c.getContext('2d'), maxW = [56, 36, 50][kind], top = 5, base = [238, 240, 150][kind], n = [36, 40, 18][kind];
+    const c = mkS(128, 256), g = c.getContext('2d'), maxW = [56, 36, 50][kind], top = 5, base = [238, 240, 150][kind], n = [36, 40, 18][kind];
     const tg = g.createLinearGradient(60, 0, 68, 0); tg.addColorStop(0, '#6a5340'); tg.addColorStop(1, '#2e241b'); g.fillStyle = tg; g.fillRect(64 - (kind === 2 ? 4 : 3), top + 26, kind === 2 ? 8 : 6, 250 - top - 26);
     for (let t = 0; t < n; t++) {
       const u = t / (n - 1), y = top + (base - top) * Math.pow(u, 0.9), hw = maxW * (0.07 + 0.93 * Math.pow(u, kind === 2 ? 0.6 : 0.85)) * (kind === 2 && u > 0.8 ? 0.75 : 1);
@@ -709,26 +719,32 @@ function buildArt() {
       for (const sd of [1, -1]) for (let q = 0; q < 2; q++) { const w = hw * (0.62 + R() * 0.5), dr = 5 + R() * 9 + u * 9, L = sd < 0 ? 19 + R() * 11 : 10 + R() * 7; bough(g, 64 + (R() - 0.5) * 4, y + q * 3, sd, w, dr, 'hsl(' + (116 + R() * 30 | 0) + ',' + (24 + R() * 18 | 0) + '%,' + (L | 0) + '%)'); }
       g.strokeStyle = 'hsla(96,34%,' + (32 + R() * 12 | 0) + '%,.55)'; g.lineWidth = 1.3; g.beginPath(); const w = hw * (0.6 + R() * 0.35); g.moveTo(64 - w * 0.25, y); g.quadraticCurveTo(64 - w * 0.65, y, 64 - w, y + 5 + u * 9); g.stroke();
     }
+    // needle texture and one-sided light, painted only where the tree already is
+    g.globalCompositeOperation = 'source-atop';
+    for (let q = 0; q < 620; q++) { const x = 64 + (R() - 0.5) * 2 * maxW, y = top + R() * (base - top), l = 2 + R() * 4, lit = x < 64 + (R() - 0.5) * 20;
+      g.strokeStyle = lit ? 'hsla(' + (86 + R() * 30 | 0) + ',38%,' + (28 + R() * 16 | 0) + '%,.5)' : 'hsla(150,30%,' + (5 + R() * 8 | 0) + '%,.5)'; g.lineWidth = 0.7; g.beginPath(); g.moveTo(x, y); g.lineTo(x + (x < 64 ? -l : l), y + l * 0.7); g.stroke(); }
+    const lg = g.createLinearGradient(64 - maxW, 0, 64 + maxW, 0); lg.addColorStop(0, 'rgba(255,236,170,.13)'); lg.addColorStop(0.5, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(0,8,20,.34)'); g.fillStyle = lg; g.fillRect(0, 0, 128, 256);
+    g.globalCompositeOperation = 'source-over';
     return { c, asp: 0.5 };
   }
   function aspen() {
-    const c = mkC(128, 256), g = c.getContext('2d'); g.fillStyle = '#d9d6c8'; g.fillRect(61.5, 70, 5, 182); g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(64.5, 70, 2, 182);
+    const c = mkS(128, 256), g = c.getContext('2d'); g.fillStyle = '#d9d6c8'; g.fillRect(61.5, 70, 5, 182); g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(64.5, 70, 2, 182);
     for (let k = 0; k < 14; k++) { g.fillStyle = '#2a2a26'; g.fillRect(61.5 + R() * 3, 110 + R() * 138, 2 + R() * 2, 1.5); }
     for (let k = 0; k < 150; k++) { const a = R() * 6.28, rr = Math.sqrt(R()), x = 64 + Math.cos(a) * rr * 40, y = 78 + Math.sin(a) * rr * 70, s = 5 + R() * 8, lit = clamp(0.55 - (x - 64) / 90 - (y - 78) / 200, 0, 1); g.fillStyle = 'hsla(' + (72 + R() * 26 | 0) + ',' + (40 + R() * 20 | 0) + '%,' + (20 + lit * 26 + R() * 6 | 0) + '%,.92)'; g.beginPath(); g.ellipse(x, y, s, s * 0.8, R() * 3, 0, 7); g.fill(); }
     return { c, asp: 0.5 };
   }
   function snag() {
-    const c = mkC(128, 256), g = c.getContext('2d'); g.fillStyle = '#8f8a82'; g.beginPath(); g.moveTo(60, 254); g.lineTo(63, 20); g.lineTo(65, 20); g.lineTo(69, 254); g.closePath(); g.fill(); g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(65, 30, 3, 224);
+    const c = mkS(128, 256), g = c.getContext('2d'); g.fillStyle = '#8f8a82'; g.beginPath(); g.moveTo(60, 254); g.lineTo(63, 20); g.lineTo(65, 20); g.lineTo(69, 254); g.closePath(); g.fill(); g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(65, 30, 3, 224);
     g.strokeStyle = '#7b766e'; g.lineCap = 'round'; for (let k = 0; k < 11; k++) { const y = 40 + R() * 150, sd = R() < 0.5 ? -1 : 1, l = 12 + R() * 30; g.lineWidth = 1 + R() * 2; g.beginPath(); g.moveTo(64, y); g.quadraticCurveTo(64 + sd * l * 0.5, y - 2, 64 + sd * l, y - 8 - R() * 14); g.stroke(); }
     return { c, asp: 0.5 };
   }
   function shrub() {
-    const c = mkC(128, 96), g = c.getContext('2d');
+    const c = mkS(128, 96), g = c.getContext('2d');
     for (let k = 0; k < 90; k++) { const a = Math.PI + R() * Math.PI, rr = Math.sqrt(R()), x = 64 + Math.cos(a) * rr * 56, y = 92 + Math.sin(a) * rr * 80, s = 6 + R() * 9, lit = clamp(0.6 - (x - 64) / 110 - (y - 40) / 110, 0, 1); g.fillStyle = 'hsla(' + (78 + R() * 40 | 0) + ',' + (26 + R() * 18 | 0) + '%,' + (15 + lit * 22 | 0) + '%,.95)'; g.beginPath(); g.ellipse(x, Math.min(y, 90), s, s * 0.75, R() * 3, 0, 7); g.fill(); }
     return { c, asp: 1.33 };
   }
   function boulder() {
-    const c = mkC(128, 96), g = c.getContext('2d'), pts = []; const n = 9; for (let k = 0; k <= n; k++) { const a = Math.PI + k / n * Math.PI; pts.push([64 + Math.cos(a) * (50 + R() * 12), 94 - (50 + R() * 20) * Math.pow(Math.abs(Math.sin(a)), 0.5)]); }
+    const c = mkS(128, 96), g = c.getContext('2d'), pts = []; const n = 9; for (let k = 0; k <= n; k++) { const a = Math.PI + k / n * Math.PI; pts.push([64 + Math.cos(a) * (50 + R() * 12), 94 - (50 + R() * 20) * Math.pow(Math.abs(Math.sin(a)), 0.5)]); }
     const gr = g.createLinearGradient(20, 10, 100, 96); gr.addColorStop(0, '#d2bdb0'); gr.addColorStop(0.5, '#a48f84'); gr.addColorStop(1, '#5e514b'); g.fillStyle = gr; g.beginPath(); g.moveTo(pts[0][0], 94); for (const p of pts) g.lineTo(p[0], Math.min(94, p[1])); g.lineTo(pts[n][0], 94); g.closePath(); g.fill(); g.save(); g.clip();
     speck(g, 128, 96, 900, 0.3, 0.22, 2); g.strokeStyle = 'rgba(30,22,20,.5)'; g.lineWidth = 1.2; for (let k = 0; k < 4; k++) wander(g, 20 + R() * 80, 20 + R() * 60, 4, 30, 34, 96);
     g.fillStyle = 'rgba(40,30,28,.35)'; g.beginPath(); g.moveTo(64 + R() * 20, 0); g.lineTo(128, 0); g.lineTo(128, 96); g.lineTo(50 + R() * 20, 96); g.closePath(); g.fill();
@@ -736,12 +752,12 @@ function buildArt() {
     return { c, asp: 1.33 };
   }
   function tuft() {
-    const c = mkC(128, 96), g = c.getContext('2d'); g.lineCap = 'round';
+    const c = mkS(128, 96), g = c.getContext('2d'); g.lineCap = 'round';
     for (let k = 0; k < 70; k++) { const x = 30 + R() * 68, a = (R() - 0.5) * 1.3, l = 40 + R() * 50, v = R(); g.strokeStyle = v < 0.4 ? '#4c5f2c' : v < 0.75 ? '#8d9a4e' : '#c9b877'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, 95); g.quadraticCurveTo(x + Math.sin(a) * l * 0.3, 95 - l * 0.6, x + Math.sin(a) * l, 95 - Math.cos(a) * l); g.stroke(); }
     return { c, asp: 1.33 };
   }
   const base = [conifer(0), conifer(1), conifer(2), aspen(), snag(), shrub(), boulder(), boulder(), tuft()];
-  if (GLOK) { atlasCanvas = mkC(1024, 512); const g = atlasCanvas.getContext('2d'); base.forEach((b, k) => g.drawImage(b.c, k < 5 ? k * 128 : (k - 5) * 128, k < 5 ? 0 : 256)); return; }
+  if (GLOK) { atlasCanvas = mkC(2048, 1024); const g = atlasCanvas.getContext('2d'); base.forEach((b, k) => g.drawImage(b.c, (k < 5 ? k * 128 : (k - 5) * 128) * KS, (k < 5 ? 0 : 256) * KS)); return; }
   // each sprite in five haze levels so far trees sink into the fog instead of popping
   for (const b of base) { const l = [b.c]; for (let k = 1; k < 5; k++) { const c = mkC(b.c.width >> (k > 2 ? 1 : 0), b.c.height >> (k > 2 ? 1 : 0)), g = c.getContext('2d'); g.drawImage(b.c, 0, 0, c.width, c.height); g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(' + FOG[0] + ',' + FOG[1] + ',' + FOG[2] + ',' + [0, 0.22, 0.44, 0.66, 0.86][k] + ')'; g.fillRect(0, 0, c.width, c.height); l.push(c); } SPR.push({ l, asp: b.asp }); }
   // clouds: one strip wrapped around the horizon
@@ -922,7 +938,7 @@ in vec3 vW; in vec3 vN; in vec3 vI; in vec2 vR; uniform vec3 uCam, uSun; uniform
 ${NOISE_GLSL}${FOG_GLSL}
 const float HW = ${HW.toFixed(2)};
 void main(){
-  float u = vI.x, au = abs(u), td = vI.y, gr = vI.z * uMixed, dist = length(vW - uCam);
+  float u = vI.x, au = abs(u), td = clamp((3530.0 - vW.y) / 230.0, 0.0, 1.0), gr = vI.z * uMixed, dist = length(vW - uCam);
   vec3 n = normalize(vN);
   float lod = clamp(1.0 - dist / 110.0, 0.0, 1.0), lod2 = clamp(1.0 - dist / 500.0, 0.0, 1.0);
   float n0 = vW.y > 3880.0 ? vn(vR, 0.03125) : 0.0, n1 = vn(vR, 0.125), n2 = vn(vR, 0.5), n3 = vn(vR, 2.0);
@@ -948,14 +964,27 @@ void main(){
   // ---- shoulder
   vec3 sh = vec3(0.56, 0.51, 0.44) * (0.72 + 0.4 * n5 + 0.16 * n3);
   // ---- road
-  float aa = fwidth(u) * 1.2 + 1e-4;
-  vec3 asp = vec3(0.265, 0.265, 0.28) * (0.8 + 0.4 * n5) * (0.9 + 0.2 * n2) * (0.94 + 0.12 * n4);
-  asp *= 1.0 - 0.13 * (exp(-pow((au - 0.95) / 0.34, 2.0)) + exp(-pow((au - 2.7) / 0.4, 2.0)));
-  asp *= mix(1.0, 0.84, smoothstep(0.68, 0.71, n1) * smoothstep(0.3, 0.5, n2));
-  asp *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 0.012 + aa * 0.4, abs(n3 - 0.5))) * step(0.52, n1) * lod;
-  float yl = (1.0 - smoothstep(0.05 - aa, 0.05 + aa, abs(au - 0.13))) * (0.72 + 0.28 * n4);
-  float wl = (1.0 - smoothstep(0.06 - aa, 0.06 + aa, abs(au - (HW - 0.3)))) * (0.7 + 0.3 * n4);
-  asp = mix(asp, vec3(0.80, 0.61, 0.12), yl * 0.92); asp = mix(asp, vec3(0.80, 0.80, 0.78), wl * 0.85);
+  float aa = fwidth(u) * 1.2 + 1e-4, s = vI.y, sa = fwidth(s) + 1e-4;
+  // resurfaced stretches: each has its own age, from fresh black to weathered grey, with a hard joint between them
+  float age = h2(ivec2(int(floor(s / 310.0)), 7)) * 0.6 + h2(ivec2(int(floor((s + 140.0) / 870.0)), 3)) * 0.4;
+  vec3 asp = mix(vec3(0.175, 0.175, 0.19), vec3(0.345, 0.34, 0.335), age) * (0.8 + 0.4 * n5) * (0.9 + 0.2 * n2) * (0.94 + 0.12 * n4);
+  asp += vec3(0.11, 0.105, 0.095) * smoothstep(0.7, 0.9, n5) * lod * (0.35 + 0.65 * age);                    // stone chips showing through worn tar
+  asp *= 1.0 - 0.12 * (exp(-pow((au - 0.95) / 0.34, 2.0)) + exp(-pow((au - 2.7) / 0.4, 2.0)));               // wheel paths
+  asp *= 1.0 - 0.06 * exp(-pow((au - 1.85) / 0.25, 2.0));                                                    // oil strip mid-lane
+  ivec2 pc = ivec2(int(floor(s / 11.0)), int(floor((u + 20.0) / 1.85)));                                     // square repair patches
+  float pm = step(0.945, h2(pc)) * step(abs(fract(s / 11.0) - 0.5), 0.18 + 0.27 * h2(pc + ivec2(5, 9)));
+  asp = mix(asp, vec3(0.15, 0.15, 0.16) * (0.85 + 0.3 * n5), pm * 0.8);
+  // tar-sealed cracks: across the road, along the centre joint, and wandering
+  float tc = floor(s / 7.0), tp = (fract(s / 7.0) - 0.5) * 7.0 + (n2 - 0.5) * 0.6 + (h2(ivec2(int(tc), 11)) - 0.5) * 4.0;
+  float tcr = (1.0 - smoothstep(0.0, 0.02 + sa * 0.6, abs(tp))) * step(0.72, h2(ivec2(int(tc), 13)) + age * 0.5);
+  float lcr = (1.0 - smoothstep(0.0, 0.018 + aa * 0.6, abs(u - (n1 - 0.5) * 0.2))) * step(0.3, age);
+  float wcr = (1.0 - smoothstep(0.0, 0.012 + aa * 0.4, abs(n3 - 0.5))) * step(0.52, n1);
+  asp *= 1.0 - 0.55 * max(max(tcr, lcr * 0.8), wcr) * lod;
+  float wear = 0.5 + 0.5 * smoothstep(0.25, 0.6, n4 * 0.6 + n2 * 0.4);                                       // paint worn thin in places
+  float yl = (1.0 - smoothstep(0.05 - aa, 0.05 + aa, abs(au - 0.13))) * wear * (1.0 - 0.3 * age);
+  float wl = (1.0 - smoothstep(0.06 - aa, 0.06 + aa, abs(au - (HW - 0.3)))) * wear;
+  asp = mix(asp, vec3(0.82, 0.62, 0.10), yl * 0.95); asp = mix(asp, vec3(0.84, 0.84, 0.82), wl * 0.88);
+  asp = mix(asp, vec3(0.50, 0.45, 0.38) * (0.7 + 0.5 * n5), smoothstep(HW - 1.0, HW, au + (n3 - 0.5) * 0.8 + (n1 - 0.5) * 0.7) * 0.55);   // grit washed onto the edges
   vec3 grv = vec3(0.61, 0.53, 0.40) * (0.62 + 0.5 * n5 + 0.26 * n4) * (0.88 + 0.24 * n2);
   grv *= 1.0 - 0.17 * exp(-pow((au - 1.7) / 0.5, 2.0));
   vec3 road = mix(asp, grv, smoothstep(0.4, 0.6, gr));
@@ -966,6 +995,10 @@ void main(){
   float shd = td > 0.02 && lod2 > 0.0 ? td * smoothstep(0.4, 0.6, vn(vR + vec2(37.0, 11.0), 0.125) * 0.55 + n2 * 0.45) * lod2 : 0.0;
   float dif = max(dot(n, uSun), 0.0) * (1.0 - 0.62 * shd);
   col *= vec3(0.50, 0.54, 0.62) + vec3(1.0, 0.95, 0.84) * dif * 0.72;
+  // sun glint and the pale sheen tarmac takes on at a shallow angle
+  vec3 V = normalize(uCam - vW); float rd = (1.0 - smoothstep(HW - 0.2, HW + 0.2, au)) * (1.0 - smoothstep(0.4, 0.6, gr));
+  col += vec3(1.0, 0.96, 0.88) * pow(max(dot(reflect(-uSun, n), V), 0.0), 40.0) * rd * (0.2 + 0.5 * n5) * 0.4 * (1.0 - shd);
+  col = mix(col, uFog * 0.92, rd * pow(1.0 - max(V.y, 0.0), 7.0) * 0.3);
   o = vec4(fogged(col, dist), 1.0);
 }`,
   skyV: `#version 300 es
@@ -1013,6 +1046,35 @@ precision highp float;
 in vec2 vUV; in float vD; in float vT; uniform sampler2D uAt; out vec4 o;
 ${FOG_GLSL}
 void main(){ vec4 t = texture(uAt, vUV); if (t.a * (1.0 + vD / 140.0) < 0.5) discard; o = vec4(fogged(t.rgb * vT * 1.12, vD), 1.0); }`,
+  rockV: `#version 300 es
+in vec3 aP; in vec3 iP; in vec3 iR; uniform mat4 uVP; out vec3 vW; out vec3 vL; out float vH;
+void main(){ float c = cos(iR.y), s = sin(iR.y); vec3 q = aP * vec3(1.0 + 0.35 * sin(iR.z * 43.0), 0.85 + 0.3 * sin(iR.z * 71.0), 1.0 + 0.35 * cos(iR.z * 29.0));
+  vW = iP + vec3(q.x * c - q.z * s, q.y, q.x * s + q.z * c) * iR.x; vL = aP * 1.6 + iR.z * 19.0; vH = q.y; gl_Position = uVP * vec4(vW, 1.0); }`,
+  rockF: `#version 300 es
+precision highp float;
+in vec3 vW; in vec3 vL; in float vH; uniform vec3 uCam, uSun; out vec4 o;
+${FOG_GLSL}
+float h3(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float n3d(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y), mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z); }
+void main(){
+  vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (dot(n, uCam - vW) < 0.0) n = -n;       // flat facets
+  float d = length(vW - uCam), a = n3d(vL * 2.0), b = n3d(vL * 7.0), c = n3d(vL * 23.0);
+  vec3 col = mix(vec3(0.50, 0.40, 0.36), vec3(0.78, 0.67, 0.61), a * 0.55 + b * 0.45) * (0.8 + 0.4 * c);   // pink-grey granite
+  col *= 1.0 - 0.22 * (1.0 - smoothstep(0.0, 0.04, abs(a - 0.5)));                                         // fractures
+  col = mix(col, vec3(0.40, 0.46, 0.28), smoothstep(0.6, 0.8, b) * smoothstep(0.3, 0.9, n.y) * 0.6);        // lichen on the top faces
+  col *= vec3(0.70, 0.73, 0.80) * (0.85 + 0.2 * n.y) + vec3(1.0, 0.95, 0.84) * max(dot(n, uSun), 0.0) * 0.55;
+  col *= 0.72 + 0.28 * smoothstep(-0.25, 0.25, vH);                                                        // darker where it meets the ground
+  o = vec4(fogged(col, d), 1.0); }`,
+  shdV: `#version 300 es
+in vec2 aC; in vec3 iP; in vec3 iS; uniform mat4 uVP; uniform vec3 uCam, uSun; out vec2 vA; out float vD;
+void main(){ vec2 a = vec2(aC.x * 2.0, aC.y * 2.0 - 1.0), sd = normalize(uSun.xz);
+  vec2 off = (sd * (a.y * 1.35 - 0.5) + vec2(-sd.y, sd.x) * a.x) * iS.x;
+  vec3 p = iP + vec3(off.x, 0.12 + iS.y * off.x + iS.z * off.y, off.y); vA = a; vD = length(p - uCam); gl_Position = uVP * vec4(p, 1.0); }`,
+  shdF: `#version 300 es
+precision highp float;
+in vec2 vA; in float vD; out vec4 o;
+void main(){ o = vec4(0.03, 0.05, 0.09, 0.5 * (1.0 - smoothstep(0.3, 1.0, length(vA))) * (1.0 - smoothstep(220.0, 420.0, vD))); }`,
   propV: `#version 300 es
 in vec3 aPos; in vec3 aCol; uniform mat4 uVP; uniform vec3 uCam; out vec3 vC; out float vD;
 void main(){ vC = aCol; vD = length(aPos - uCam); gl_Position = uVP * vec4(aPos, 1.0); }`,
@@ -1035,6 +1097,7 @@ function glInit() {
     GL = gcv.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' }); if (!GL) return false;
     PRG.ter = glProgram(GLSL.terV, GLSL.terF, ['aPos', 'aNrm', 'aInfo']); PRG.sky = glProgram(GLSL.skyV, GLSL.skyF, []);
     PRG.tree = glProgram(GLSL.treeV, GLSL.treeF, ['aC', 'iP', 'iS']); PRG.prop = glProgram(GLSL.propV, GLSL.propF, ['aPos', 'aCol']);
+    PRG.rock = glProgram(GLSL.rockV, GLSL.rockF, ['aP', 'iP', 'iR']); PRG.shd = glProgram(GLSL.shdV, GLSL.shdF, ['aC', 'iP', 'iS']);
     return true;
   } catch (e) { console.warn('WebGL unavailable, using the 2D renderer: ' + e.message); GL = null; return false; }
 }
@@ -1044,6 +1107,17 @@ function glAtlas() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
+/* One boulder shape: a twice-split icosahedron pushed in and out at random; each boulder then gets its own stretch, turn and size */
+function rockMesh() {
+  const t = (1 + Math.sqrt(5)) / 2, V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(v => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; });
+  let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const mid = new Map(), mp = (a, b) => { const k = a < b ? a * 1000 + b : b * 1000 + a; if (mid.has(k)) return mid.get(k); const v = [V[a][0] + V[b][0], V[a][1] + V[b][1], V[a][2] + V[b][2]], l = Math.hypot(v[0], v[1], v[2]); V.push([v[0] / l, v[1] / l, v[2] / l]); mid.set(k, V.length - 1); return V.length - 1; };
+  const F2 = []; for (const [a, b, c] of F) { const ab = mp(a, b), bc = mp(b, c), ca = mp(c, a); F2.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); } F = F2;
+  const P = V.map((v, i) => { const r = 0.72 + 0.5 * hash(i * 7.31 + 3) * (i < 12 ? 1.15 : 0.8); return [v[0] * r, v[1] * r, v[2] * r]; });
+  const out = new Float32Array(F.length * 9); let q = 0; for (const f of F) for (const i of f) { out[q++] = P[i][0]; out[q++] = P[i][1]; out[q++] = P[i][2]; }
+  return out;
+}
+const ROCKV = 240;
 function glUpload(T) {
   const gl = GL, m = T.glm;
   if (glBuf) { for (const b of glBuf.bufs) gl.deleteBuffer(b); for (const v of glBuf.vaos) gl.deleteVertexArray(v); }
@@ -1056,8 +1130,12 @@ function glUpload(T) {
   const iv = gl.createVertexArray(); gl.bindVertexArray(iv); const cb = mk(gl.ARRAY_BUFFER, new Float32Array([-0.5, 0, 0.5, 0, -0.5, 1, 0.5, 1]));
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   const nb = mk(gl.ARRAY_BUFFER, m.inst); gl.enableVertexAttribArray(1); gl.enableVertexAttribArray(2); gl.vertexAttribDivisor(1, 1); gl.vertexAttribDivisor(2, 1);
+  const rv = gl.createVertexArray(); gl.bindVertexArray(rv); const rm = mk(gl.ARRAY_BUFFER, rockMesh()); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  const rb = mk(gl.ARRAY_BUFFER, m.rocks); gl.enableVertexAttribArray(1); gl.enableVertexAttribArray(2); gl.vertexAttribDivisor(1, 1); gl.vertexAttribDivisor(2, 1);
+  const hv = gl.createVertexArray(); gl.bindVertexArray(hv); gl.bindBuffer(gl.ARRAY_BUFFER, cb); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const hb = mk(gl.ARRAY_BUFFER, m.shad); gl.enableVertexAttribArray(1); gl.enableVertexAttribArray(2); gl.vertexAttribDivisor(1, 1); gl.vertexAttribDivisor(2, 1);
   const sv = gl.createVertexArray(); gl.bindVertexArray(null);
-  glBuf = { tv, pv, iv, sv, nb, bufs: [vb, ib, pb, cb, nb], vaos: [tv, pv, iv, sv] };
+  glBuf = { tv, pv, iv, sv, nb, rv, rb, hv, hb, bufs: [vb, ib, pb, cb, nb, rm, rb, hb], vaos: [tv, pv, iv, sv, rv, hv] };
 }
 const VPm = new Float32Array(16), RTm = new Float32Array(9), SUN3 = (() => { const e = 0.9, c = Math.cos(e); return [SUNX * c, Math.sin(e), SUNZ * c]; })();
 function drawGL() {
@@ -1090,7 +1168,17 @@ function drawGL() {
   P = PRG.prop; gl.useProgram(P.p); gl.bindVertexArray(glBuf.pv);
   gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3f(P.u.uFog, fr, fg, fb); gl.uniform1f(P.u.uFogD, fogDist);
   gl.drawArrays(gl.TRIANGLES, 0, m.props.length / 6);
-  // trees, shrubs, boulders
+  // boulders (real shapes, near the car) and soft shadows under the trees
+  P = PRG.rock; gl.useProgram(P.p); gl.bindVertexArray(glBuf.rv); gl.bindBuffer(gl.ARRAY_BUFFER, glBuf.rb);
+  gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3fv(P.u.uSun, SUN3); gl.uniform3f(P.u.uFog, fr, fg, fb); gl.uniform1f(P.u.uFogD, fogDist);
+  const rockD = det === 2 ? 900 : det ? 600 : 380;
+  for (let q = 0; q < nv; q++) { const ch = m.chunks[vis[q]]; if (!ch.rc || Math.hypot(ch.x - cam.x, ch.z - cam.z) > rockD) continue; gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, ch.ro * 24); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, ch.ro * 24 + 12); gl.drawArraysInstanced(gl.TRIANGLES, 0, ROCKV, ch.rc); }
+  if (det) { P = PRG.shd; gl.useProgram(P.p); gl.bindVertexArray(glBuf.hv); gl.bindBuffer(gl.ARRAY_BUFFER, glBuf.hb);
+    gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3fv(P.u.uSun, SUN3);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -2);
+    for (let q = 0; q < nv; q++) { const ch = m.chunks[vis[q]]; if (!ch.sc || Math.hypot(ch.x - cam.x, ch.z - cam.z) > 600) continue; gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, ch.so * 24); gl.vertexAttribPointer(2, 3, gl.FLOAT, false, 24, ch.so * 24 + 12); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, ch.sc); }
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.disable(gl.POLYGON_OFFSET_FILL); }
+  // trees, shrubs, grass
   P = PRG.tree; gl.useProgram(P.p); gl.bindVertexArray(glBuf.iv); gl.bindBuffer(gl.ARRAY_BUFFER, glBuf.nb);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, atlasTex); gl.uniform1i(P.u.uAt, 0);
   gl.uniformMatrix4fv(P.u.uVP, false, VPm); gl.uniform3f(P.u.uCam, cam.x, cam.y, cam.z); gl.uniform3f(P.u.uCamR, cw, 0, -sy); gl.uniform3f(P.u.uFog, fr, fg, fb); gl.uniform1f(P.u.uFogD, fogDist);
@@ -1160,6 +1248,18 @@ function paceNote() {
   }
   return null;
 }
+function drawNearMap(u) {
+  const T = track, c = car, r = 52 * u, mx = 76 * u, my = 134 * u, range = 190 + 3.2 * Math.abs(c.vx), k = 1.5 * r / range, sp = Math.sin(c.psi), cp = Math.cos(c.psi), cyy = my + 0.6 * r;
+  ctx.save(); ctx.beginPath(); ctx.arc(mx, my, r, 0, 7); ctx.fillStyle = 'rgba(10,12,15,.5)'; ctx.fill(); ctx.clip();
+  // range ring every 100 m
+  ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1 * u; for (let d = 100; d < range * 1.2; d += 100) { ctx.beginPath(); ctx.arc(mx, cyy, d * k, Math.PI, 2 * Math.PI); ctx.stroke(); }
+  const i0 = Math.max(0, c.idx - 14), i1 = Math.min(T.N - 1, c.idx + Math.ceil(range * 1.6 / SEG)); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  for (const [col, lw] of [['rgba(0,0,0,.65)', 8], ['#eef1f4', 4]]) { ctx.strokeStyle = col; ctx.lineWidth = lw * u; ctx.beginPath();
+    for (let i = i0; i <= i1; i++) { const dx = T.X[i] - c.x, dz = T.Z[i] - c.z, X = mx + (dx * cp - dz * sp) * k, Y = cyy - (dx * sp + dz * cp) * k; i === i0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y); } ctx.stroke(); }
+  for (const d of [T.startD, T.finishD]) { const i = Math.round(d / SEG); if (i > i0 && i < i1) { const dx = T.X[i] - c.x, dz = T.Z[i] - c.z; ctx.fillStyle = '#ff5a46'; ctx.beginPath(); ctx.arc(mx + (dx * cp - dz * sp) * k, cyy - (dx * sp + dz * cp) * k, 4 * u, 0, 7); ctx.fill(); } }
+  ctx.fillStyle = '#f4a020'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5 * u; ctx.beginPath(); ctx.moveTo(mx, cyy - 8 * u); ctx.lineTo(mx + 5.5 * u, cyy + 5 * u); ctx.lineTo(mx - 5.5 * u, cyy + 5 * u); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore(); ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.lineWidth = 1.5 * u; ctx.beginPath(); ctx.arc(mx, my, r, 0, 7); ctx.stroke();
+}
 const PED = { bx0: 0.56, bx1: 0.76, gx0: 0.78, gx1: 0.985, top: 0.56 };
 function drawHUD(dt) {
   const T = track, c = car, u = sc, mph = S.mph;
@@ -1171,6 +1271,7 @@ function drawHUD(dt) {
   if (run.lmT > 0) { run.lmT -= dt; ctx.globalAlpha = clamp(run.lmT, 0, 1); txt(run.lm, W / 2, 84 * u, 13, '#eef1f4', 'center', '600'); ctx.globalAlpha = 1; }
   // pace note
   if (run.state !== 'done' && Math.abs(c.vx) > 6) { const p = paceNote(); if (p) { const s = (p.dir < 0 ? '◀ ' : '') + p.sev + (p.dir > 0 ? ' ▶' : ''); txt(s, W / 2, H * 0.3, p.sev === 'HAIRPIN' ? 17 : 22, p.sev === 'HAIRPIN' || p.sev < '3' ? '#ff8a7a' : '#ffd27a'); } }
+  drawNearMap(u);
   // minimap + altitude
   const mx = W - (T.mw + 8) * u, my = 48 * u; ctx.globalAlpha = 0.9; ctx.drawImage(T.mm, mx, my, T.mw * u, T.mh * u); ctx.globalAlpha = 1;
   ctx.fillStyle = '#f4a020'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5 * u; ctx.beginPath(); ctx.arc(mx + T.mapX(c.x) * u, my + T.mapY(c.z) * u, 3.6 * u, 0, 7); ctx.fill(); ctx.stroke();
@@ -1223,7 +1324,7 @@ cv.addEventListener('pointerdown', e => {
 const steerRange = () => Math.min(window.innerWidth * 0.17, 140);
 cv.addEventListener('pointermove', e => {
   if (e.pointerId === steerPtr) steerRaw = clamp((e.clientX - steerX0) / steerRange(), -1, 1);
-  else if (pedPtr.has(e.pointerId)) { pedPtr.set(e.pointerId, pedalFor(e)); pedalsApply(); }
+  else if (pedPtr.has(e.pointerId)) { pedPtr.get(e.pointerId).v = pedalFor(e).v; pedalsApply(); }   // sliding sideways never swaps pedals: lift and press the other one
 });
 function ptrEnd(e) { if (e.pointerId === steerPtr) { steerPtr = null; steerRaw = 0; } if (pedPtr.delete(e.pointerId)) pedalsApply(); }
 cv.addEventListener('pointerup', ptrEnd); cv.addEventListener('pointercancel', ptrEnd); cv.addEventListener('lostpointercapture', ptrEnd);
