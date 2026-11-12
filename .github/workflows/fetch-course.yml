@@ -1,0 +1,49 @@
+# Fetches the real road (OpenStreetMap) and terrain (USGS 3DEP) and commits them to data/.
+# Runs when the fetch script changes, or by hand: Actions tab -> "Fetch course data" -> Run workflow.
+name: Fetch course data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/fetch_course.py
+      - .github/workflows/fetch-course.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-course
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install libraries
+        run: pip install numpy requests tifffile imagecodecs pillow
+
+      - name: Fetch road and terrain
+        run: python tools/fetch_course.py
+
+      - name: Save results to the repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Update course data from OpenStreetMap and USGS"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi

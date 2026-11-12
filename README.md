@@ -17,6 +17,14 @@ Best times are saved in each player's own browser.
 The built-in course is an approximation of the real road (length, climb, turn count and section character),
 not a survey. Load a real GPX file from the in-game menu, or replace the `COURSE` array.
 
+## Real course data
+`tools/fetch_course.py` pulls the real road from OpenStreetMap and the terrain from the USGS 3D Elevation
+Program, and saves them in `data/` (see `data/report.md`). It runs on GitHub's servers through the
+"Fetch course data" workflow: Actions tab → Fetch course data → Run workflow.
+
+Road data © OpenStreetMap contributors, available under the Open Database License.
+Elevation data: U.S. Geological Survey, 3D Elevation Program (public domain).
+
 ## Files
 - `index.html` — the game (built file; this is what GitHub Pages serves)
 - `src/template.html` — game source, with placeholders for the course data
