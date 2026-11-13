@@ -26,6 +26,8 @@ mountain; anywhere else the hillsides are generated from the road.
 
 Road data © OpenStreetMap contributors, available under the Open Database License.
 Elevation data: U.S. Geological Survey, 3D Elevation Program (public domain).
+Tree cover and the Glen Cove reference photo: USDA National Agriculture Imagery Program (public domain).
+Buildings, parking areas and side roads: © OpenStreetMap contributors.
 
 ## Files
 - `index.html` — the game (built file; this is what GitHub Pages serves)

@@ -8,13 +8,14 @@ const places = fs.existsSync(data + 'places.json') ? JSON.parse(fs.readFileSync(
 // ---- start line. The race starts at the highway's Mile 7 marker. OpenStreetMap has the Mile 8 marker but not Mile 7,
 // so the line is placed one mile of road below Mile 8. The game draws its start line 40 m into the course, so the
 // course is trimmed to begin 40 m before that point (this also drops the junction stub at the very start of the fetched road).
-const LEAD = 40;
+const LEAD = 40; let TRIM = 0;
 (function () {
   const m8 = places.find(p => p.tags.highway === 'milestone' && p.tags.distance === '8 mi'); if (!m8) { console.log('no Mile 8 marker: start line left at the start of the data'); return; }
   const startM = (m8.mile - 1) * MI, trim = startM - LEAD; if (!(trim > 0)) return;
   const k = 111320 * Math.cos(course[0][0] * Math.PI / 180), dist = (a, b) => Math.hypot((b[1] - a[1]) * k, (b[0] - a[0]) * 111132);
   let acc = 0, i = 1; for (; i < course.length; i++) { const d = dist(course[i - 1], course[i]); if (acc + d >= trim) { const f = (trim - acc) / d, a = course[i - 1], b = course[i]; course.splice(0, i, [+(a[0] + f * (b[0] - a[0])).toFixed(6), +(a[1] + f * (b[1] - a[1])).toFixed(6), +(a[2] + f * (b[2] - a[2])).toFixed(1)]); break; } acc += d; }
   for (const p of places) p.mile = +(p.mile - trim / MI).toFixed(3);
+  TRIM = trim;
   let len = 0; for (let q = 1; q < course.length; q++) len += dist(course[q - 1], course[q]);
   console.log('start line at ' + (startM / MI).toFixed(3) + ' mi of the fetched road; course trimmed by ' + Math.round(trim) + ' m; start to end of road ' + ((len - LEAD) / 1000).toFixed(2) + ' km; first point', course[0]);
 })();
@@ -53,6 +54,16 @@ if (fs.existsSync(data + 'terrain.bin')) {
   if (fs.existsSync(data + 'terrain_outer.bin')) T.outer = pack(JSON.parse(fs.readFileSync(data + 'terrain_outer.json', 'utf8')), fs.readFileSync(data + 'terrain_outer.bin'));
   terrain = JSON.stringify(T);
 }
+// ---- mapped features, tree map, spectator areas
+const rd = f => fs.existsSync(data + f) ? JSON.parse(fs.readFileSync(data + f, 'utf8')) : null;
+const feats = (rd('features.json') || []).map(f => ({ k: f.kind[0], t: f.tags, p: f.pts }));
+const vegSrc = rd('veg.json'), veg = vegSrc ? { step: vegSrc.step_m, half: vegSrc.half, stations: vegSrc.stations, course_m: vegSrc.course_m, trim: TRIM, b64: vegSrc.bits } : null;
+// spectator areas named in the hill climb's guides, placed by landmark or by the elevation the guides give
+const cumM = [0]; { const k = 111320 * Math.cos(course[0][0] * Math.PI / 180); for (let i = 1; i < course.length; i++) cumM.push(cumM[i - 1] + Math.hypot((course[i][1] - course[i - 1][1]) * k, (course[i][0] - course[i - 1][0]) * 111132)); }
+const mileAtFt = ft => { for (let i = 1; i < course.length; i++) if (course[i][2] >= ft * 0.3048) return cumM[i] / MI; return null; };
+const m9 = places.find(p => p.tags.highway === 'milestone' && p.tags.distance === '9 mi');
+const spect = [[m9 ? m9.mile : null, '9 Mile'], [pick('Halfway Picnic Grounds'), 'Halfway Picnic Grounds'], [mileAtFt(10900), 'Ski Area'], [pick('Glen Cove', p => p.tags.place), 'Glen Cove'], [mileAtFt(11656), 'Cove Creek'], [pick("Devil's Playground", p => p.tags.amenity), "Devil's Playground"]].filter(a => a[0] != null).map(a => [+a[0].toFixed(3), a[1]]);
+console.log('spectator areas:', spect.map(a => a[1] + ' ' + a[0]).join(', '), '| features', feats.length, '| tree map', veg ? veg.stations + ' stations' : 'none');
 let s = '[\n'; for (let i = 0; i < course.length; i += 6) s += course.slice(i, i + 6).map(p => JSON.stringify(p)).join(',') + (i + 6 < course.length ? ',\n' : '\n'); s += ']';
-t = t.replace('/*COURSE*/', () => s).replace('/*LANDMARKS*/', () => JSON.stringify(lm)).replace('/*TERRAIN*/', () => terrain);
+t = t.replace('/*COURSE*/', () => s).replace('/*LANDMARKS*/', () => JSON.stringify(lm)).replace('/*TERRAIN*/', () => terrain).replace('/*FEATURES*/', () => JSON.stringify(feats)).replace('/*VEG*/', () => JSON.stringify(veg)).replace('/*SPECTATE*/', () => JSON.stringify(spect));
 fs.writeFileSync(d + '/../index.html', t); console.log('bytes', t.length);
