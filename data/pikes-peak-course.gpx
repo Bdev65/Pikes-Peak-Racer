@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Pikes-Peak-Racer tools/fetch_course.py" xmlns="http://www.topografix.com/GPX/1/1">
-<metadata><name>Pikes Peak International Hill Climb course</name><time>2026-11-12T22:07:55Z</time><copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright></metadata>
+<metadata><name>Pikes Peak International Hill Climb course</name><time>2026-11-13T03:46:22Z</time><copyright author="OpenStreetMap contributors"><license>https://opendatacommons.org/licenses/odbl/</license></copyright></metadata>
 <trk><name>Start line to summit</name><trkseg>
 <trkpt lat="38.922854" lon="-105.034853"><ele>2862.9</ele></trkpt>
 <trkpt lat="38.922878" lon="-105.034786"><ele>2862.8</ele></trkpt>
