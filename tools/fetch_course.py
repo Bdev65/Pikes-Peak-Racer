@@ -29,6 +29,7 @@ import requests
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data')
 COURSE_M = float(os.environ.get('COURSE_KM', '19.99')) * 1000
 SUMMIT = (38.84053, -105.04428)                      # Pikes Peak summit
+GLEN_COVE = (38.87554, -105.07298)                  # the Glen Cove locality in OpenStreetMap
 SEARCH = (38.80, -105.13, 38.98, -104.95)            # south, west, north, east
 PUBLISHED = {'start_ft': 9390, 'finish_ft': 14115, 'length_mi': 12.42, 'turns': 156}
 UA = {'User-Agent': 'Pikes-Peak-Racer course builder (github.com/Bdev65/Pikes-Peak-Racer)'}
@@ -296,6 +297,111 @@ def count_turns(pts):
     return turns
 
 
+def _near(pts):
+    P = np.array(pts); kx = 111320 * math.cos(math.radians(P[0, 0]))
+    return lambda la, lo: float(np.min(np.hypot((P[:, 0] - la) * 111132, (P[:, 1] - lo) * kx)))
+
+
+def fetch_features(pts):
+    """Buildings, parking areas and other roads near the course (for Glen Cove, pull-offs and spectator parking)."""
+    lats = [p[0] for p in pts]; lons = [p[1] for p in pts]
+    s, w, n, e = min(lats) - 0.004, min(lons) - 0.005, max(lats) + 0.004, max(lons) + 0.005
+    q = (f'[out:json][timeout:120];(way["building"]({s},{w},{n},{e});way["amenity"="parking"]({s},{w},{n},{e});'
+         f'way["highway"]["highway"!~"path|footway|steps|cycleway|bridleway|pedestrian|construction|proposed"]({s},{w},{n},{e}););out geom tags;')
+    near = _near(pts); out = []
+    for el in overpass(q, 'features'):
+        g = el.get('geometry'); tg = el.get('tags', {})
+        if not g:
+            continue
+        kind = 'building' if 'building' in tg else 'parking' if tg.get('amenity') == 'parking' else 'road'
+        d = min(near(v['lat'], v['lon']) for v in g)
+        if d > (150 if kind == 'road' else 260):
+            continue
+        out.append({'kind': kind, 'near_m': round(d), 'tags': {k: v for k, v in tg.items() if k in ('name', 'highway', 'building', 'surface', 'oneway', 'access', 'parking', 'service', 'lanes', 'tourism', 'amenity')},
+                    'pts': [[round(v['lat'], 6), round(v['lon'], 6)] for v in g]})
+    with open(os.path.join(OUT, 'features.json'), 'w') as f:
+        json.dump(out, f, separators=(',', ':'))
+    log('  ' + ', '.join(f"{sum(1 for o in out if o['kind'] == k)} {k}s" for k in ('building', 'parking', 'road')))
+
+
+def naip(b, W, H):
+    """Aerial photo (USDA NAIP via the USGS image service) as an array H x W x bands, plus the extent returned."""
+    import tifffile
+    s, w, n, e = b; last = None
+    for svc in ('USGSNAIPPlus', 'USGSNAIPImagery'):
+        url = f'https://imagery.nationalmap.gov/arcgis/rest/services/{svc}/ImageServer/exportImage'
+        params = {'bbox': f'{w},{s},{e},{n}', 'bboxSR': 4326, 'imageSR': 4326, 'size': f'{W},{H}', 'format': 'tiff', 'pixelType': 'U8',
+                  'compression': 'LZW', 'interpolation': 'RSP_BilinearInterpolation', 'f': 'json'}
+        try:
+            log(f'NAIP {svc}: {W} x {H}')
+            r = requests.get(url, params=params, headers=UA, timeout=300); r.raise_for_status(); meta = r.json()
+            if 'href' not in meta:
+                raise RuntimeError(json.dumps(meta)[:300])
+            ex = meta['extent']; r = requests.get(meta['href'], headers=UA, timeout=300); r.raise_for_status()
+            a = tifffile.imread(io.BytesIO(r.content))
+            if a.ndim == 2:
+                a = a[..., None]
+            if a.shape[0] < 8 and a.shape[2] > 8:
+                a = np.moveaxis(a, 0, -1)
+            log(f'  got {a.shape}, band means {[round(float(a[..., k].mean()), 1) for k in range(a.shape[2])]}')
+            if a[..., :3].mean() < 3:
+                raise RuntimeError('image is blank')
+            return a.astype(np.float32), (ex['ymin'], ex['xmin'], ex['ymax'], ex['xmax'])
+        except Exception as ex:  # noqa: BLE001
+            last = ex; log(f'  failed: {ex}')
+    raise RuntimeError(f'no aerial imagery: {last}')
+
+
+def fetch_veg(pts):
+    """Where the trees are: a tree / open-ground map in road coordinates (every 6 m along, 150 m to each side), from aerial photos."""
+    from PIL import Image
+    b = bounds_for(pts, 230); s, w, n, e = b
+    H = min(3900, int(round((n - s) * 111132 / 3.0))); W = int(round(H * (e - w) / (n - s)))
+    a, (s, w, n, e) = naip(b, W, H); H, W = a.shape[:2]
+    R, G, B = a[..., 0], a[..., 1], a[..., 2]; bright = (R + G + B) / 3
+    if a.shape[2] >= 4:
+        N = a[..., 3]; ndvi = (N - R) / (N + R + 1); tree = (ndvi > VEG_NDVI) & (bright < VEG_DARK)
+    else:
+        ndvi = (2 * G - R - B) / (R + G + B + 1); tree = (ndvi > 0.03) & (bright < VEG_DARK)
+    pad = np.pad(tree.astype(np.float32), 1, mode='edge'); frac = sum(pad[i:i + H, j:j + W] for i in range(3) for j in range(3)) / 9
+    # stations every 6 m along the course
+    cum = [0.0]
+    for p, q in zip(pts, pts[1:]):
+        cum.append(cum[-1] + dist(p, q))
+    P = np.array(pts); st = np.arange(0, cum[-1], 6.0); la = np.interp(st, cum, P[:, 0]); lo = np.interp(st, cum, P[:, 1])
+    kx = 111320 * math.cos(math.radians(P[0, 0])); x = lo * kx; y = la * 111132
+    tx = np.gradient(x); ty = np.gradient(y); L = np.hypot(tx, ty) + 1e-9; rx = ty / L; ry = -tx / L       # unit vector to the right of travel
+    offs = (np.arange(51) - 25) * 6.0
+    X = x[:, None] + rx[:, None] * offs[None, :]; Y = y[:, None] + ry[:, None] * offs[None, :]
+    px = np.clip(((X / kx - w) / (e - w) * W).astype(int), 0, W - 1); py = np.clip(((n - Y / 111132) / (n - s) * H).astype(int), 0, H - 1)
+    m = frac[py, px] > 0.5
+    info = {'step_m': 6, 'side_step_m': 6, 'half': 25, 'stations': int(len(st)), 'course_m': round(cum[-1], 1), 'tree_share': round(float(m.mean()), 3),
+            'bits': __import__('base64').b64encode(np.packbits(m.astype(np.uint8), axis=None).tobytes()).decode()}
+    with open(os.path.join(OUT, 'veg.json'), 'w') as f:
+        json.dump(info, f)
+    log(f'  tree map: {len(st)} stations, {m.mean() * 100:.0f}% trees')
+    # preview: photo and tree map side by side for three places, so the thresholds can be checked by eye
+    tiles = []
+    for frac_along in (0.03, 0.25, 0.47):
+        k = int(frac_along * len(st)); cx = int((lo[k] - w) / (e - w) * W); cy = int((n - la[k]) / (n - s) * H); r = 150
+        x0 = max(0, min(W - 2 * r, cx - r)); y0 = max(0, min(H - 2 * r, cy - r))
+        rgb = np.clip(a[y0:y0 + 2 * r, x0:x0 + 2 * r, :3], 0, 255).astype(np.uint8); ov = rgb.copy(); tm = tree[y0:y0 + 2 * r, x0:x0 + 2 * r]
+        ov[tm] = (0.4 * ov[tm] + 0.6 * np.array([255, 0, 200])).astype(np.uint8); tiles.append(np.concatenate([rgb, ov], axis=1))
+    Image.fromarray(np.concatenate(tiles, axis=0)).resize((1200, 1800), Image.NEAREST).save(os.path.join(OUT, 'veg_preview.png'))
+
+
+def fetch_photo(center, half_m, name):
+    from PIL import Image
+    dlat = half_m / 111132; dlon = half_m / (111320 * math.cos(math.radians(center[0])))
+    b = (center[0] - dlat, center[1] - dlon, center[0] + dlat, center[1] + dlon)
+    a, got = naip(b, 1100, int(1100 * dlat / dlon))
+    Image.fromarray(np.clip(a[..., :3], 0, 255).astype(np.uint8)).save(os.path.join(OUT, name + '.jpg'), quality=88)
+    json.dump({'south': got[0], 'west': got[1], 'north': got[2], 'east': got[3]}, open(os.path.join(OUT, name + '.json'), 'w'))
+
+
+VEG_NDVI, VEG_DARK = 0.15, 105
+
+
 def write_grid(dem, b, cell_m, name, src):
     """Save an elevation grid for the game: block-averaged to about cell_m, uint16 decimetres."""
     s, w, n, e = b
@@ -396,6 +502,13 @@ def main():
         write_grid(odem, ogb, 60.0, 'terrain_outer', osrc)
     except Exception as ex:  # noqa: BLE001
         log(f'  wider terrain skipped: {ex}')
+    for label, fn in (('Buildings, parking and side roads', lambda: fetch_features(pts)), ('Tree map from aerial photos', lambda: fetch_veg(pts)),
+                      ('Aerial photo of Glen Cove', lambda: fetch_photo(GLEN_COVE, 260, 'glen_cove'))):
+        try:
+            log('== ' + label)
+            fn()
+        except Exception as ex:  # noqa: BLE001
+            log(f'  skipped: {ex}')
     try:
         log('== Places')
         fetch_places(pts)
